@@ -1,0 +1,16 @@
+{
+  "name": "ServiConnect",
+  "short_name": "ServiConnect",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0071E3",
+  "description": "AI-powered local service worker finder and booking platform.",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

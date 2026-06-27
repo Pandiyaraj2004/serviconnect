@@ -1,0 +1,45 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Users collection — open read/write for app functionality
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Workers collection — open read/write (admin can disable/enable)
+    match /workers/{workerId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Bookings — open read/write for all authenticated flows
+    match /bookings/{bookingId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Chats — open read/write
+    match /chats/{chatId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Reviews — open read/write
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Notifications — open read/write (includes subcollection items)
+    match /notifications/{notifId} {
+      allow read: if true;
+      allow write: if true;
+    }
+    match /notifications/{notifId}/items/{itemId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}
