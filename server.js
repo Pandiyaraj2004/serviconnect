@@ -2,8 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
+import { createClient } from '@supabase/supabase-js';
+
+// Load environment variables
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,83 +18,270 @@ const PORT = 5000;
 app.use(cors());
 app.use(express.json());
 
-// Serve static files from the uploads directory
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Initialize Supabase Client (Service Role)
+const supabaseUrl = process.env.VITE_SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const BUCKET_NAME = 'serviconnect-storage';
 
-// Helper to guarantee directories exist
-const ensureDirExists = (dirPath) => {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-  }
-};
+let supabase;
+if (supabaseUrl && supabaseServiceKey) {
+  supabase = createClient(supabaseUrl, supabaseServiceKey);
+  console.log('⚡ Connected to Supabase Storage API Gateway');
+} else {
+  console.error('❌ Supabase configuration missing! Set VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env');
+}
 
-// Storage rules config
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    let subDir = 'uploads/';
-    const url = req.originalUrl;
-    
-    if (url.includes('/profile/customer')) {
-      subDir = 'uploads/profiles/customers/';
-    } else if (url.includes('/profile/worker')) {
-      subDir = 'uploads/profiles/workers/';
-    } else if (url.includes('/profile/admin')) {
-      subDir = 'uploads/profiles/admins/';
-    } else if (url.includes('/work-photos')) {
-      subDir = 'uploads/work-photos/';
-    } else if (url.includes('/review-images')) {
-      subDir = 'uploads/reviews/';
-    }
-    
-    const targetPath = path.join(__dirname, subDir);
-    ensureDirExists(targetPath);
-    cb(null, targetPath);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1E9)}${ext}`;
-    cb(null, uniqueName);
-  }
-});
+// Keep the uploads folder static endpoint for legacy local uploads if they exist in DB
+import fs from 'fs';
+const uploadsPath = path.join(__dirname, 'uploads');
+if (fs.existsSync(uploadsPath)) {
+  app.use('/uploads', express.static(uploadsPath));
+}
 
+// Multer configured for memory storage
+const storage = multer.memoryStorage();
 const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    // Validate image types
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only JPG, JPEG, PNG, and WEBP are allowed.'));
+    }
+  }
 });
 
-// Profile Upload routes
-app.post('/api/upload/profile/customer', upload.single('image'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  const fileUrl = `http://localhost:${PORT}/uploads/profiles/customers/${req.file.filename}`;
-  res.json({ url: fileUrl });
+// Helper: Sanitize folder/file names to prevent invalid URLs
+const sanitizeName = (name) => {
+  if (!name) return 'anonymous';
+  return name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').trim();
+};
+
+// Helper: Extract relative path from a Supabase URL to allow deletion
+const getPathFromUrl = (url) => {
+  if (!url) return null;
+  const marker = `public/${BUCKET_NAME}/`;
+  const index = url.indexOf(marker);
+  if (index === -1) return null;
+  return decodeURIComponent(url.substring(index + marker.length));
+};
+
+// Route: Upload Customer Profile Photo
+app.post('/api/upload/profile/customer', upload.single('image'), async (req, res) => {
+  try {
+    if (!supabase) return res.status(500).json({ error: 'Supabase client not initialized' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    // Client passes name in req.body
+    const customerName = sanitizeName(req.body.name || 'customer');
+    const ext = path.extname(req.file.originalname) || '.jpg';
+    
+    // Structure: customers/{customerName}/profile/profile-image.jpg
+    const filePath = `customers/${customerName}/profile/profile-image${ext}`;
+
+    const { data, error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(filePath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: true
+      });
+
+    if (error) throw error;
+
+    const { data: { publicUrl } } = supabase.storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(filePath);
+
+    res.json({ url: publicUrl });
+  } catch (err) {
+    console.error('Customer Avatar Upload Error:', err);
+    res.status(500).json({ error: err.message || 'Upload failed' });
+  }
 });
 
-app.post('/api/upload/profile/worker', upload.single('image'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  const fileUrl = `http://localhost:${PORT}/uploads/profiles/workers/${req.file.filename}`;
-  res.json({ url: fileUrl });
+// Route: Upload Worker Profile Photo
+app.post('/api/upload/profile/worker', upload.single('image'), async (req, res) => {
+  try {
+    if (!supabase) return res.status(500).json({ error: 'Supabase client not initialized' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const workerName = sanitizeName(req.body.name || 'worker');
+    const ext = path.extname(req.file.originalname) || '.jpg';
+    
+    // Structure: workers/{workerName}/profile/profile-image.jpg
+    const filePath = `workers/${workerName}/profile/profile-image${ext}`;
+
+    const { data, error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(filePath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: true
+      });
+
+    if (error) throw error;
+
+    const { data: { publicUrl } } = supabase.storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(filePath);
+
+    res.json({ url: publicUrl });
+  } catch (err) {
+    console.error('Worker Avatar Upload Error:', err);
+    res.status(500).json({ error: err.message || 'Upload failed' });
+  }
 });
 
-app.post('/api/upload/profile/admin', upload.single('image'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  const fileUrl = `http://localhost:${PORT}/uploads/profiles/admins/${req.file.filename}`;
-  res.json({ url: fileUrl });
+// Route: Upload Admin Profile Photo
+app.post('/api/upload/profile/admin', upload.single('image'), async (req, res) => {
+  try {
+    if (!supabase) return res.status(500).json({ error: 'Supabase client not initialized' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const adminName = sanitizeName(req.body.name || 'admin');
+    const ext = path.extname(req.file.originalname) || '.jpg';
+    
+    const filePath = `admin/${adminName}/profile/profile-image${ext}`;
+
+    const { data, error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(filePath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: true
+      });
+
+    if (error) throw error;
+
+    const { data: { publicUrl } } = supabase.storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(filePath);
+
+    res.json({ url: publicUrl });
+  } catch (err) {
+    console.error('Admin Avatar Upload Error:', err);
+    res.status(500).json({ error: err.message || 'Upload failed' });
+  }
 });
 
-// Work Photos (Up to 10)
-app.post('/api/upload/work-photos', upload.array('images', 10), (req, res) => {
-  if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
-  const urls = req.files.map(file => `http://localhost:${PORT}/uploads/work-photos/${file.filename}`);
-  res.json({ urls });
+// Route: Upload Multiple Worker Portfolio Photos (Up to 10)
+app.post('/api/upload/work-photos', upload.array('images', 10), async (req, res) => {
+  try {
+    if (!supabase) return res.status(500).json({ error: 'Supabase client not initialized' });
+    if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
+
+    const workerName = sanitizeName(req.body.name || 'worker');
+    const urls = [];
+
+    for (const file of req.files) {
+      const ext = path.extname(file.originalname) || '.jpg';
+      const cleanOriginalName = file.originalname.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+      const uniqueName = `${Date.now()}-${cleanOriginalName}${ext}`;
+      
+      // Structure: workers/{workerName}/work-photos/{uniqueName}
+      const filePath = `workers/${workerName}/work-photos/${uniqueName}`;
+
+      const { data, error } = await supabase.storage
+        .from(BUCKET_NAME)
+        .upload(filePath, file.buffer, {
+          contentType: file.mimetype,
+          upsert: true
+        });
+
+      if (error) throw error;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from(BUCKET_NAME)
+        .getPublicUrl(filePath);
+
+      urls.push(publicUrl);
+    }
+
+    res.json({ urls });
+  } catch (err) {
+    console.error('Work Photos Upload Error:', err);
+    res.status(500).json({ error: err.message || 'Upload failed' });
+  }
 });
 
-// Review Images (Up to 3)
-app.post('/api/upload/review-images', upload.array('images', 3), (req, res) => {
-  if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
-  const urls = req.files.map(file => `http://localhost:${PORT}/uploads/reviews/${file.filename}`);
-  res.json({ urls });
+// Route: Upload Multiple Review Images (Up to 3)
+app.post('/api/upload/review-images', upload.array('images', 3), async (req, res) => {
+  try {
+    if (!supabase) return res.status(500).json({ error: 'Supabase client not initialized' });
+    if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
+
+    const urls = [];
+
+    for (const file of req.files) {
+      const ext = path.extname(file.originalname) || '.jpg';
+      const cleanOriginalName = file.originalname.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+      const uniqueName = `${Date.now()}-${cleanOriginalName}${ext}`;
+      
+      const filePath = `reviews/${uniqueName}`;
+
+      const { data, error } = await supabase.storage
+        .from(BUCKET_NAME)
+        .upload(filePath, file.buffer, {
+          contentType: file.mimetype,
+          upsert: true
+        });
+
+      if (error) throw error;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from(BUCKET_NAME)
+        .getPublicUrl(filePath);
+
+      urls.push(publicUrl);
+    }
+
+    res.json({ urls });
+  } catch (err) {
+    console.error('Review Images Upload Error:', err);
+    res.status(500).json({ error: err.message || 'Upload failed' });
+  }
+});
+
+// Route: Delete Individual File from Supabase Storage
+app.post('/api/upload/delete-photo', async (req, res) => {
+  try {
+    if (!supabase) return res.status(500).json({ error: 'Supabase client not initialized' });
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: 'No image URL provided for deletion' });
+
+    const filePath = getPathFromUrl(url);
+    if (!filePath) {
+      return res.status(400).json({ error: 'Invalid Supabase image URL format' });
+    }
+
+    const { data, error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .remove([filePath]);
+
+    if (error) throw error;
+
+    res.json({ success: true, message: `Successfully deleted ${filePath}` });
+  } catch (err) {
+    console.error('Delete Photo Error:', err);
+    res.status(500).json({ error: err.message || 'Deletion failed' });
+  }
+});
+
+// Handle Multer upload errors gracefully
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'File size too large. Maximum limit is 5 MB.' });
+    }
+    return res.status(400).json({ error: err.message });
+  }
+  if (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  next();
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Image Upload Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Supabase Storage API Gateway running on http://localhost:${PORT}`);
 });

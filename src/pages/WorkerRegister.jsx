@@ -9,8 +9,10 @@ import toast from 'react-hot-toast';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
+import { compressImage } from '../utils/imageCompression';
 
 const TOTAL_STEPS = 5;
+
 
 const ProgressBar = ({ step }) => (
   <div className="flex items-center gap-2 px-4 py-4">
@@ -66,6 +68,13 @@ const WorkerRegister = () => {
   const [skillBadge, setSkillBadge] = useState('Novice');
   const [verificationBadge, setVerificationBadge] = useState('Standard');
 
+  // Upload and drag-and-drop progress states
+  const [avatarProgress, setAvatarProgress] = useState(0);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [workProgress, setWorkProgress] = useState(0);
+  const [workUploading, setWorkUploading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+
   const nextStep = () => setStep(s => Math.min(s + 1, TOTAL_STEPS));
   const prevStep = () => setStep(s => Math.max(s - 1, 1));
 
@@ -90,19 +99,117 @@ const WorkerRegister = () => {
     nextStep();
   };
 
-  const handleProfilePhotoChange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const formData = new FormData();
-    formData.append('image', file);
-    
-    const toastId = toast.loading('Uploading profile photo...');
-    try {
-      const res = await fetch('http://localhost:5000/api/upload/profile/worker', {
-        method: 'POST',
-        body: formData,
+  const uploadFileWithProgress = (url, file, name, onProgress) => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const formData = new FormData();
+      formData.append('image', file);
+      if (name) {
+        formData.append('name', name);
+      }
+
+      xhr.open('POST', url, true);
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          onProgress(percent);
+        }
       });
-      const data = await res.json();
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const res = JSON.parse(xhr.responseText);
+            resolve(res);
+          } catch (err) {
+            reject(new Error('Invalid response from server'));
+          }
+        } else {
+          try {
+            const res = JSON.parse(xhr.responseText);
+            reject(new Error(res.error || 'Upload failed'));
+          } catch {
+            reject(new Error('Upload failed with status ' + xhr.status));
+          }
+        }
+      };
+
+      xhr.onerror = () => reject(new Error('Network error'));
+      xhr.send(formData);
+    });
+  };
+
+  const uploadMultipleFilesWithProgress = (url, files, name, onProgress) => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const formData = new FormData();
+      files.forEach(file => formData.append('images', file));
+      if (name) {
+        formData.append('name', name);
+      }
+
+      xhr.open('POST', url, true);
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          onProgress(percent);
+        }
+      });
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const res = JSON.parse(xhr.responseText);
+            resolve(res);
+          } catch (err) {
+            reject(new Error('Invalid response from server'));
+          }
+        } else {
+          try {
+            const res = JSON.parse(xhr.responseText);
+            reject(new Error(res.error || 'Upload failed'));
+          } catch {
+            reject(new Error('Upload failed with status ' + xhr.status));
+          }
+        }
+      };
+
+      xhr.onerror = () => reject(new Error('Network error'));
+      xhr.send(formData);
+    });
+  };
+
+  const handleProfilePhotoChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error('Invalid file type. Only JPG, JPEG, PNG, and WEBP are allowed.');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('File size too large. Maximum limit is 5 MB.');
+      return;
+    }
+
+    setAvatarUploading(true);
+    setAvatarProgress(0);
+    const toastId = toast.loading('Compressing profile photo...');
+    try {
+      const compressedFile = await compressImage(file);
+      toast.loading('Uploading profile photo...', { id: toastId });
+      
+      const data = await uploadFileWithProgress(
+        'http://localhost:5000/api/upload/profile/worker',
+        compressedFile,
+        form.name || 'worker',
+        setAvatarProgress
+      );
+
       if (data.url) {
         setForm(prev => ({ ...prev, avatar: data.url }));
         toast.success('Profile photo uploaded!', { id: toastId });
@@ -111,27 +218,48 @@ const WorkerRegister = () => {
       }
     } catch (err) {
       toast.error('Upload failed: ' + err.message, { id: toastId });
+    } finally {
+      setAvatarUploading(false);
     }
   };
 
   const handleWorkPhotosChange = async (e) => {
-    const files = Array.from(e.target.files);
+    const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
+    
     if (form.photos.length + files.length > 10) {
       toast.error('You can upload up to 10 work photos only');
       return;
     }
-    
-    const formData = new FormData();
-    files.forEach(file => formData.append('images', file));
-    
-    const toastId = toast.loading('Uploading work photos...');
+
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    for (const file of files) {
+      if (!allowedTypes.includes(file.type)) {
+        toast.error(`Invalid file type for ${file.name}. Only JPG, JPEG, PNG, and WEBP are allowed.`);
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error(`File ${file.name} is too large. Maximum limit is 5 MB.`);
+        return;
+      }
+    }
+
+    setWorkUploading(true);
+    setWorkProgress(0);
+    const toastId = toast.loading('Compressing work photos...');
     try {
-      const res = await fetch('http://localhost:5000/api/upload/work-photos', {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json();
+      const compressedFiles = await Promise.all(
+        files.map(file => compressImage(file))
+      );
+      toast.loading('Uploading work photos...', { id: toastId });
+
+      const data = await uploadMultipleFilesWithProgress(
+        'http://localhost:5000/api/upload/work-photos',
+        compressedFiles,
+        form.name || 'worker',
+        setWorkProgress
+      );
+
       if (data.urls) {
         setForm(prev => ({ ...prev, photos: [...prev.photos, ...data.urls] }));
         toast.success('Work photos uploaded!', { id: toastId });
@@ -140,6 +268,50 @@ const WorkerRegister = () => {
       }
     } catch (err) {
       toast.error('Upload failed: ' + err.message, { id: toastId });
+    } finally {
+      setWorkUploading(false);
+    }
+  };
+
+  const handleDeletePhoto = async (url) => {
+    const toastId = toast.loading('Removing photo...');
+    try {
+      setForm(prev => ({ ...prev, photos: prev.photos.filter(p => p !== url) }));
+      const res = await fetch('http://localhost:5000/api/upload/delete-photo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success('Photo removed successfully', { id: toastId });
+      } else {
+        throw new Error(data.error || 'Failed to delete photo from storage');
+      }
+    } catch (err) {
+      toast.error('Could not remove photo: ' + err.message, { id: toastId });
+    }
+  };
+
+  const handleDrag = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const files = Array.from(e.dataTransfer.files);
+      const fakeEvent = { target: { files } };
+      await handleWorkPhotosChange(fakeEvent);
     }
   };
 
@@ -381,25 +553,50 @@ const WorkerRegister = () => {
                       id="profile-upload"
                       className="hidden"
                       onChange={handleProfilePhotoChange}
+                      disabled={avatarUploading}
                     />
-                    <label htmlFor="profile-upload" className="px-4 py-2 border rounded-button text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300">
+                    <label htmlFor="profile-upload" className={`px-4 py-2 border rounded-button text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 ${avatarUploading ? 'opacity-50 pointer-events-none' : ''}`}>
                       <Upload size={14} /> Choose Avatar File
                     </label>
+                    
+                    {avatarUploading && (
+                      <div className="mt-2.5">
+                        <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+                          <span>Compressing & Uploading...</span>
+                          <span>{avatarProgress}%</span>
+                        </div>
+                        <div className="w-full bg-gray-100 dark:bg-gray-800 h-1 rounded-full overflow-hidden">
+                          <div className="bg-primary-light dark:bg-primary-dark h-full transition-all duration-300" style={{ width: `${avatarProgress}%` }} />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
 
               {/* Work Photos */}
-              <div className="bg-white dark:bg-surface-dark border border-gray-150 dark:border-gray-850 p-4 rounded-xl">
-                <label className="text-sm font-bold text-gray-700 dark:text-gray-300 block mb-2">Portfolio Work Photos (up to 10)</label>
+              <div 
+                className={`bg-white dark:bg-surface-dark border p-4 rounded-xl transition-all ${
+                  dragActive ? 'border-primary-light dark:border-primary-dark bg-blue-50/20' : 'border-gray-150 dark:border-gray-850'
+                }`}
+                onDragEnter={handleDrag}
+                onDragOver={handleDrag}
+                onDragLeave={handleDrag}
+                onDrop={handleDrop}
+              >
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-sm font-bold text-gray-700 dark:text-gray-300">Portfolio Work Photos (up to 10)</label>
+                  <span className="text-xs text-gray-400">{form.photos.length}/10</span>
+                </div>
+
                 <div className="grid grid-cols-4 gap-2 mb-4">
                   {form.photos.map((url, i) => (
                     <div key={i} className="aspect-square bg-gray-100 dark:bg-gray-800 rounded-xl overflow-hidden relative group border">
                       <img src={url} alt={`Work ${i+1}`} className="w-full h-full object-cover" />
                       <button
                         type="button"
-                        onClick={() => setForm(prev => ({ ...prev, photos: prev.photos.filter((_, idx) => idx !== i) }))}
-                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => handleDeletePhoto(url)}
+                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity shadow"
                       >
                         ✕
                       </button>
@@ -415,18 +612,32 @@ const WorkerRegister = () => {
                         id="work-photos-upload"
                         className="hidden"
                         onChange={handleWorkPhotosChange}
+                        disabled={workUploading}
                       />
-                      <label htmlFor="work-photos-upload" className="aspect-square border-2 border-dashed border-gray-250 dark:border-gray-750 rounded-xl flex items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 text-2xl">
-                        +
+                      <label htmlFor="work-photos-upload" className="aspect-square border-2 border-dashed border-gray-250 dark:border-gray-750 rounded-xl flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 text-2xl transition-all">
+                        <span>+</span>
+                        <span className="text-[10px] text-gray-400 mt-1 hidden sm:inline">Drag & Drop</span>
                       </label>
                     </div>
                   )}
                 </div>
+
+                {workUploading && (
+                  <div className="mt-2">
+                    <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+                      <span>Uploading portfolio photos...</span>
+                      <span>{workProgress}%</span>
+                    </div>
+                    <div className="w-full bg-gray-100 dark:bg-gray-800 h-1.5 rounded-full overflow-hidden">
+                      <div className="bg-primary-light dark:bg-primary-dark h-full transition-all duration-300" style={{ width: `${workProgress}%` }} />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <button
                 onClick={nextStep}
-                disabled={!form.avatar}
+                disabled={!form.avatar || avatarUploading || workUploading}
                 className="w-full py-3 bg-primary-light dark:bg-primary-dark text-white rounded-button font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
               >
                 Continue <ArrowRight size={18} />

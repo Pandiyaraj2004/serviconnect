@@ -32,7 +32,7 @@ Customers can search, verify, and book independent freelance workers (plumbers, 
 - ✅ **Job Completion OTP** — 4-digit OTP flow for worker/customer job completion verification and worker reactivation.
 - ⭐ **Reviews & Ratings** — post-job review system saved permanently to Firestore.
 - 👑 **Admin Console** — statistics tracking, user management, chat inspector, and worker removal system.
-- 📂 **Local Image Storage** — Node.js + Express upload APIs using Multer (replacing Firebase Storage).
+- 📂 **Supabase Image Storage** — Secure direct-to-memory Node.js + Express gateway streaming files directly into Supabase Storage.
 
 ---
 
@@ -41,7 +41,7 @@ Customers can search, verify, and book independent freelance workers (plumbers, 
 | Layer | Technology |
 |-------|-----------|
 | Frontend | React 18, Vite 5 |
-| Backend | Node.js, Express, Multer (Local storage) |
+| Backend | Node.js, Express, Multer (Memory Storage) + Supabase Storage SDK |
 | Styling | Tailwind CSS v3 |
 | Animations | Framer Motion |
 | Routing | React Router v6 |
@@ -61,6 +61,7 @@ Before you begin, make sure you have:
 - **Node.js** v18 or higher → [nodejs.org](https://nodejs.org)
 - **npm** v9 or higher (comes with Node.js)
 - A **Firebase account** → [firebase.google.com](https://firebase.google.com) (free tier is sufficient)
+- A **Supabase account** → [supabase.com](https://supabase.com) (for image management and storage)
 - A **Google AI Studio account** for Gemini API → [aistudio.google.com](https://aistudio.google.com) (optional — app fallback questions are available)
 
 Check your versions:
@@ -98,6 +99,11 @@ VITE_FIREBASE_DATABASE_URL=https://your-project-id-default-rtdb.firebaseio.com/
 
 # Google Gemini AI API Key
 VITE_GEMINI_API_KEY=your_gemini_api_key_here
+
+# Supabase Storage Configuration
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
 
 ### Step 3: Run the Full-Stack Application
@@ -149,6 +155,15 @@ service cloud.firestore {
     ".write": "auth != null"
   }
 }
+```
+
+### Supabase Storage Settings
+1. Create a public bucket named `serviconnect-storage` in your Supabase project dashboard.
+2. In the Supabase **SQL Editor**, execute the following SQL policy to enable public read permissions:
+```sql
+CREATE POLICY "Public Read Access"
+ON storage.objects FOR SELECT
+USING ( bucket_id = 'serviconnect-storage' );
 ```
 
 ---
