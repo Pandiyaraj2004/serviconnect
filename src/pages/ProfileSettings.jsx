@@ -12,6 +12,8 @@ import toast from 'react-hot-toast';
 import { subscribeToNotifications } from '../utils/notifications';
 import { compressImage } from '../utils/imageCompression';
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
 const ProfileSettings = () => {
   const navigate = useNavigate();
   const { user, userProfile, logout, updateUserProfile } = useAuth();
@@ -233,7 +235,7 @@ const ProfileSettings = () => {
       
       const roleEndpoint = userProfile?.role === 'worker' ? 'worker' : 'customer';
       const data = await uploadFileWithProgress(
-        `http://localhost:5000/api/upload/profile/${roleEndpoint}`,
+        `${API_URL}/api/upload/profile/${roleEndpoint}`,
         compressedFile,
         editForm.name || 'user',
         setAvatarProgress
@@ -283,7 +285,7 @@ const ProfileSettings = () => {
       toast.loading('Uploading work photos...', { id: toastId });
 
       const data = await uploadMultipleFilesWithProgress(
-        'http://localhost:5000/api/upload/work-photos',
+        `${API_URL}/api/upload/work-photos`,
         compressedFiles,
         editForm.name || 'worker',
         setWorkProgress
@@ -306,11 +308,14 @@ const ProfileSettings = () => {
     const toastId = toast.loading('Removing photo...');
     try {
       setEditForm(prev => ({ ...prev, photos: prev.photos.filter(p => p !== url) }));
-      const res = await fetch('http://localhost:5000/api/upload/delete-photo', {
+      const res = await fetch(`${API_URL}/api/upload/delete-photo`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
       });
+      if (!res.ok) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
       const data = await res.json();
       if (data.success) {
         toast.success('Photo removed successfully', { id: toastId });

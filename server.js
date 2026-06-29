@@ -13,10 +13,41 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+// Production CORS Configuration
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'https://serviconnect-seven.vercel.app'
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow if no origin (e.g. mobile apps, curl, postman)
+    if (!origin) return callback(null, true);
+    
+    const isLocalhost = origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:');
+    const isAllowedOrigin = allowedOrigins.includes(origin);
+    
+    if (isAllowedOrigin || (process.env.NODE_ENV !== 'production' && isLocalhost)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
+
 app.use(express.json());
+
+// Render Health Check Endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    supabaseConnected: !!supabase
+  });
+});
 
 // Initialize Supabase Client (Service Role)
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
@@ -283,5 +314,5 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Supabase Storage API Gateway running on http://localhost:${PORT}`);
+  console.log(`🚀 Supabase Storage API Gateway running on port ${PORT}`);
 });

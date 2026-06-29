@@ -11,6 +11,8 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { compressImage } from '../utils/imageCompression';
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
 const TOTAL_STEPS = 5;
 
 
@@ -204,7 +206,7 @@ const WorkerRegister = () => {
       toast.loading('Uploading profile photo...', { id: toastId });
       
       const data = await uploadFileWithProgress(
-        'http://localhost:5000/api/upload/profile/worker',
+        `${API_URL}/api/upload/profile/worker`,
         compressedFile,
         form.name || 'worker',
         setAvatarProgress
@@ -254,7 +256,7 @@ const WorkerRegister = () => {
       toast.loading('Uploading work photos...', { id: toastId });
 
       const data = await uploadMultipleFilesWithProgress(
-        'http://localhost:5000/api/upload/work-photos',
+        `${API_URL}/api/upload/work-photos`,
         compressedFiles,
         form.name || 'worker',
         setWorkProgress
@@ -277,11 +279,14 @@ const WorkerRegister = () => {
     const toastId = toast.loading('Removing photo...');
     try {
       setForm(prev => ({ ...prev, photos: prev.photos.filter(p => p !== url) }));
-      const res = await fetch('http://localhost:5000/api/upload/delete-photo', {
+      const res = await fetch(`${API_URL}/api/upload/delete-photo`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
       });
+      if (!res.ok) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
       const data = await res.json();
       if (data.success) {
         toast.success('Photo removed successfully', { id: toastId });
