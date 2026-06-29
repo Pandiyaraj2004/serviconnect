@@ -197,3 +197,29 @@ Test the entire system end-to-end using the three roles:
 - Check live metrics on the Overview dashboard.
 - Inspect the conversations under **Chats Inspector** (reads logs directly from RTDB).
 - Select a worker and click **Remove**. Enter the reason to disable their profile. Try accessing the dashboard using that worker's credentials to confirm the warning message.
+
+---
+
+## 🌐 Deployment Status & Production URLs
+
+ServiConnect is deployed and fully production-ready.
+
+- **Frontend (Vercel)**: [https://serviconnect-seven.vercel.app](https://serviconnect-seven.vercel.app)
+- **Backend API Gateway (Render)**: [https://serviconnect-xwyv.onrender.com](https://serviconnect-xwyv.onrender.com)
+  - Health check endpoint: [https://serviconnect-xwyv.onrender.com/health](https://serviconnect-xwyv.onrender.com/health)
+
+### Production Configuration
+
+#### Frontend Environment Settings (Vercel)
+Provide these values in Vercel's Environment Variables settings:
+* `VITE_API_URL` = `https://serviconnect-xwyv.onrender.com`
+* `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, etc.
+* `VITE_GEMINI_API_KEY` (Gemini API key for worker verification tests)
+
+#### Backend Environment Settings (Render)
+Provide these values in Render's Environment Variables settings:
+* `NODE_ENV` = `production`
+* `FRONTEND_URL` = `https://serviconnect-seven.vercel.app` (enforces CORS restriction to your deployed frontend only)
+* `VITE_SUPABASE_URL` & `SUPABASE_SERVICE_ROLE_KEY` (for secure server-side file uploads to Supabase)
+* `PORT` (automatically assigned by Render's execution environment)
+
