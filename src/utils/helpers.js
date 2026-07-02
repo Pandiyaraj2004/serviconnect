@@ -99,3 +99,20 @@ export const LANGUAGES = [
   { id: 'telugu', name: 'Telugu', script: 'తెలుగు', flag: '🏴' },
   { id: 'kannada', name: 'Kannada', script: 'ಕನ್ನಡ', flag: '🏴' },
 ];
+
+// Format image URLs to ensure they contain protocol
+export function formatImageUrl(url) {
+  if (!url) return '';
+  const trimmed = url.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('/')) {
+    return trimmed;
+  }
+  // Check if it looks like a domain or path (e.g. mjrgwtdzpwxpigzvrtlx.supabase.co)
+  if (trimmed.includes('supabase.co') || trimmed.includes('.com') || trimmed.includes('.org') || trimmed.includes('.net')) {
+    return `https://${trimmed}`;
+  }
+  return trimmed;
+}

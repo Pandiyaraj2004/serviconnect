@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, MapPin, Star } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { SERVICE_CATEGORIES, getGreeting, getDistance } from '../utils/helpers';
+import { SERVICE_CATEGORIES, getGreeting, getDistance, formatImageUrl } from '../utils/helpers';
 import toast from 'react-hot-toast';
 import { BottomNav, Skeleton } from '../components/UI';
 import { collection, getDocs } from 'firebase/firestore';
@@ -256,7 +256,7 @@ const CustomerDashboard = () => {
                   <div className="flex items-start gap-3 mb-4">
                     <div className="relative shrink-0">
                       {worker.avatar ? (
-                        <img src={worker.avatar} alt={worker.name} className="w-12 h-12 rounded-full object-cover border" />
+                        <img src={formatImageUrl(worker.avatar)} alt={worker.name} className="w-12 h-12 rounded-full object-cover border" />
                       ) : (
                         <div className="w-12 h-12 rounded-full bg-gradient-to-br from-primary-light to-blue-400 flex items-center justify-center text-white font-bold text-sm">
                           {worker.name.charAt(0)}

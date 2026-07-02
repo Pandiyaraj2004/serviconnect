@@ -274,6 +274,68 @@ app.post('/api/upload/review-images', upload.array('images', 3), async (req, res
   }
 });
 
+// Route: Upload Aadhaar Document (Front/Back)
+app.post('/api/upload/aadhaar', upload.single('image'), async (req, res) => {
+  try {
+    if (!supabase) return res.status(500).json({ error: 'Supabase client not initialized' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const workerId = sanitizeName(req.body.workerId || 'worker');
+    const side = req.body.side || 'front';
+    const ext = path.extname(req.file.originalname) || '.jpg';
+    
+    // Structure: workers/{workerId}/aadhaar/{side}-{timestamp}{ext}
+    const filePath = `workers/${workerId}/aadhaar/${side}-${Date.now()}${ext}`;
+
+    const { data, error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(filePath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: true
+      });
+
+    if (error) throw error;
+
+    const { data: { publicUrl } } = supabase.storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(filePath);
+
+    res.json({ url: publicUrl });
+  } catch (err) {
+    console.error('Aadhaar Upload Error:', err);
+    res.status(500).json({ error: err.message || 'Upload failed' });
+  }
+});
+
+// Route: Upload Support Ticket Attachment
+app.post('/api/upload/ticket-attachment', upload.single('image'), async (req, res) => {
+  try {
+    if (!supabase) return res.status(500).json({ error: 'Supabase client not initialized' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const ext = path.extname(req.file.originalname) || '.jpg';
+    const filePath = `tickets/attachments/${Date.now()}-${Math.random().toString(36).substring(2, 7)}${ext}`;
+
+    const { data, error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(filePath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: true
+      });
+
+    if (error) throw error;
+
+    const { data: { publicUrl } } = supabase.storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(filePath);
+
+    res.json({ url: publicUrl });
+  } catch (err) {
+    console.error('Ticket Attachment Upload Error:', err);
+    res.status(500).json({ error: err.message || 'Upload failed' });
+  }
+});
+
 // Route: Delete Individual File from Supabase Storage
 app.post('/api/upload/delete-photo', async (req, res) => {
   try {

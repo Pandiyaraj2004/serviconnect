@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, MapPin, Map, List, Star, Filter, SlidersHorizontal, ChevronDown, Navigation, X, Search } from 'lucide-react';
-import { SERVICE_CATEGORIES, INDIAN_CITIES, getDistance } from '../utils/helpers';
+import { ArrowLeft, MapPin, Map, List, Star, Filter, SlidersHorizontal, ChevronDown, Navigation, X, Search, ShieldCheck } from 'lucide-react';
+import { SERVICE_CATEGORIES, INDIAN_CITIES, getDistance, formatImageUrl } from '../utils/helpers';
 import { StaggerContainer, StaggerItem, Badge, EmptyState } from '../components/UI';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import { collection, getDocs } from 'firebase/firestore';
@@ -434,10 +434,10 @@ const SearchResults = () => {
               <StaggerItem key={worker.id}>
                 <motion.div whileHover={{ y: -2 }} onClick={() => navigate(`/worker/${worker.id}`)} className="bg-white rounded-card p-4 border cursor-pointer shadow-soft hover:shadow-md transition-shadow">
                   <div className="flex gap-4">
-                    <div className="relative flex-shrink-0">{worker.avatar ? <img src={worker.avatar} alt={worker.name} className="w-16 h-16 rounded-full object-cover border" /> : <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary-light to-blue-400 flex items-center justify-center text-white font-bold">{worker.name.charAt(0)}</div>}</div>
+                    <div className="relative flex-shrink-0">{worker.avatar ? <img src={formatImageUrl(worker.avatar)} alt={worker.name} className="w-16 h-16 rounded-full object-cover border" /> : <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary-light to-blue-400 flex items-center justify-center text-white font-bold">{worker.name.charAt(0)}</div>}</div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between"><div><h3 className="font-bold text-gray-900">{worker.name}</h3><p className="text-xs text-gray-500 capitalize">{worker.category} • {worker.experience} yrs exp</p></div><span className="font-black text-primary-light text-sm">₹{worker.price}</span></div>
-                      <div className="flex items-center gap-2 mt-2 flex-wrap"><div className="flex items-center gap-1 text-xs text-amber-500 font-bold"><Star size={12} fill="currentColor" /><span>{worker.rating.toFixed(1)}</span></div><span className="text-xs text-gray-500 flex items-center"><MapPin size={12} className="mr-0.5" />{worker.distance} km</span>{worker.badge && <Badge variant="primary">{worker.badge}</Badge>}</div>
+                      <div className="flex items-center gap-2 mt-2 flex-wrap"><div className="flex items-center gap-1 text-xs text-amber-500 font-bold"><Star size={12} fill="currentColor" /><span>{worker.rating.toFixed(1)}</span></div><span className="text-xs text-gray-500 flex items-center"><MapPin size={12} className="mr-0.5" />{worker.distance} km</span>{worker.verificationStatus === 'verified' && <Badge variant="success" className="flex items-center gap-0.5"><ShieldCheck size={10} /> Verified</Badge>}{worker.badge && <Badge variant="primary">{worker.badge}</Badge>}</div>
                     </div>
                   </div>
                 </motion.div>

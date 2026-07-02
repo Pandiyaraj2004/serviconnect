@@ -73,6 +73,7 @@ const MyBookings = () => {
       if (booking.workerId) {
         await updateDoc(doc(db, 'workers', booking.workerId), {
           available: true,
+          activeBookingId: null,
           updatedAt: serverTimestamp()
         });
       }

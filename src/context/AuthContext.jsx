@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import {
-  onAuthStateChanged, signOut, signInWithPopup,
+  onAuthStateChanged, signOut, signInWithPopup, signInWithRedirect, getRedirectResult,
   signInWithEmailAndPassword, createUserWithEmailAndPassword,
   updateProfile, setPersistence, browserLocalPersistence
 } from 'firebase/auth';
@@ -87,6 +87,26 @@ export const AuthProvider = ({ children }) => {
       console.warn('Could not enable auth persistence:', err.message);
     });
 
+    // Check redirect result on mount
+    getRedirectResult(auth).then((result) => {
+      if (mounted && result && result.user) {
+        const savedRole = localStorage.getItem('sc_active_role') || 'customer';
+        ensureUserProfile(result.user).then(profile => {
+          if (mounted && profile) {
+            setUserProfile({ ...profile, role: savedRole });
+          }
+        }).catch(err => console.warn('Redirect profile load failed:', err));
+        toast.success('Logged in successfully!');
+      }
+    }).catch((err) => {
+      console.error('Redirect sign-in error:', err);
+      if (err.code === 'auth/network-request-failed') {
+        toast.error('Network request failed during Google Login. Please check your internet connection or disable ad-blockers.');
+      } else if (err.code !== 'auth/popup-closed-by-user') {
+        toast.error(err.message || 'Redirect login failed');
+      }
+    });
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (!mounted) return;
 
@@ -149,10 +169,17 @@ export const AuthProvider = ({ children }) => {
       toast.success('Logged in successfully!');
       return result;
     } catch (err) {
-      if (err.code !== 'auth/popup-closed-by-user') {
-        toast.error(err.message || 'Login failed');
+      if (err.code === 'auth/network-request-failed' || err.code === 'auth/popup-blocked') {
+        console.warn('Google Popup login failed/blocked, attempting redirect login...', err);
+        toast.loading('Popup blocked or network failed. Redirecting to Google Login instead...');
+        setActiveRole(requestedRole);
+        await signInWithRedirect(auth, googleProvider);
+      } else {
+        if (err.code !== 'auth/popup-closed-by-user') {
+          toast.error(err.message || 'Login failed');
+        }
+        throw err;
       }
-      throw err;
     }
   };
 

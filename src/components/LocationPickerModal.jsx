@@ -44,6 +44,7 @@ const LocationPickerModal = ({ isOpen, onClose, onSave, initialLat, initialLng, 
   const [loadingGeo, setLoadingGeo] = useState(false);
   const [mapSearchQuery, setMapSearchQuery] = useState('');
   const [searching, setSearching] = useState(false);
+  const [locationInfo, setLocationInfo] = useState({ city: '', district: '', state: '', country: '' });
 
   useEffect(() => {
     if (initialLat && initialLng) {
@@ -66,15 +67,25 @@ const LocationPickerModal = ({ isOpen, onClose, onSave, initialLat, initialLng, 
       if (data && data.display_name) {
         const a = data.address;
         const parts = [];
+        let city = '';
+        let district = '';
+        let state = '';
+        let country = '';
         if (a) {
           if (a.road) parts.push(a.road);
           if (a.suburb) parts.push(a.suburb);
           else if (a.neighbourhood) parts.push(a.neighbourhood);
           if (a.city || a.town || a.village) parts.push(a.city || a.town || a.village);
           if (a.state) parts.push(a.state);
+
+          city = a.city || a.town || a.village || a.suburb || '';
+          district = a.county || a.state_district || a.district || '';
+          state = a.state || '';
+          country = a.country || '';
         }
         const cleanAddr = parts.length > 0 ? parts.join(', ') : data.display_name.split(',').slice(0, 3).join(', ');
         setAddress(cleanAddr);
+        setLocationInfo({ city, district, state, country });
       }
     } catch (err) {
       console.warn('Map pick reverse geocode error:', err);
@@ -85,7 +96,7 @@ const LocationPickerModal = ({ isOpen, onClose, onSave, initialLat, initialLng, 
     if (!mapSearchQuery.trim()) return;
     setSearching(true);
     try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(mapSearchQuery)}&limit=1`, {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(mapSearchQuery)}&limit=1&addressdetails=1`, {
         headers: { 'Accept-Language': 'en', 'User-Agent': 'ServiConnect-App' }
       });
       const data = await res.json();
@@ -95,6 +106,14 @@ const LocationPickerModal = ({ isOpen, onClose, onSave, initialLat, initialLng, 
         const lng = parseFloat(item.lon);
         setPosition([lat, lng]);
         setAddress(item.display_name);
+        
+        const a = item.address;
+        const city = a ? (a.city || a.town || a.village || a.suburb || '') : '';
+        const district = a ? (a.county || a.state_district || a.district || '') : '';
+        const state = a ? (a.state || '') : '';
+        const country = a ? (a.country || '') : '';
+        setLocationInfo({ city, district, state, country });
+        
         toast.success(`Found: ${item.display_name.split(',')[0]}`);
       } else {
         toast.error('Location not found');
@@ -138,7 +157,11 @@ const LocationPickerModal = ({ isOpen, onClose, onSave, initialLat, initialLng, 
     onSave({
       lat: position[0],
       lng: position[1],
-      address: address.trim()
+      address: address.trim(),
+      city: locationInfo.city,
+      district: locationInfo.district,
+      state: locationInfo.state,
+      country: locationInfo.country
     });
     onClose();
   };

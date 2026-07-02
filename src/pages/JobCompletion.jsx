@@ -160,6 +160,7 @@ const JobCompletionPage = () => {
       // 2. Set worker back to available in workers collection
       await updateDoc(doc(db, 'workers', booking.workerId), {
         available: true,
+        activeBookingId: null,
         updatedAt: serverTimestamp()
       });
 

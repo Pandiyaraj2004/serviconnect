@@ -8,6 +8,7 @@ import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firesto
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { createNotification, NOTIF_TEMPLATES } from '../utils/notifications';
+import { formatImageUrl } from '../utils/helpers';
 
 const ChatPage = () => {
   const navigate = useNavigate();
@@ -210,7 +211,7 @@ const ChatPage = () => {
         </button>
         <div className="relative">
           {partnerProfile?.avatar ? (
-            <img src={partnerProfile.avatar} alt={partnerProfile.name} className="w-10 h-10 rounded-full object-cover border" />
+            <img src={formatImageUrl(partnerProfile.avatar)} alt={partnerProfile.name} className="w-10 h-10 rounded-full object-cover border" />
           ) : (
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary-light to-blue-400 flex items-center justify-center text-white font-bold text-sm">
               {partnerProfile?.initial || 'U'}
@@ -291,7 +292,7 @@ const ChatPage = () => {
                 {!isOwn && (
                   <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center text-[10px] mr-2 mt-1 flex-shrink-0 font-bold border">
                     {partnerProfile?.avatar ? (
-                      <img src={partnerProfile.avatar} alt="" className="w-full h-full rounded-full object-cover" />
+                      <img src={formatImageUrl(partnerProfile.avatar)} alt="" className="w-full h-full rounded-full object-cover" />
                     ) : (
                       partnerProfile?.initial
                     )}

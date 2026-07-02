@@ -6,9 +6,23 @@ import { BottomNav, Badge } from '../components/UI';
 import { useAuth } from '../context/AuthContext';
 import { doc, onSnapshot, updateDoc, collection, query, where, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { sendCustomerConfirmation } from '../utils/helpers';
+import { sendCustomerConfirmation, formatImageUrl } from '../utils/helpers';
 import { createNotification, NOTIF_TEMPLATES, subscribeToNotifications } from '../utils/notifications';
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Title, Tooltip, Legend } from 'chart.js';
+import { Line, Bar, Doughnut } from 'react-chartjs-2';
 import toast from 'react-hot-toast';
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  BarElement,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend
+);
 
 const WorkerDashboard = () => {
   const navigate = useNavigate();
@@ -69,6 +83,11 @@ const WorkerDashboard = () => {
 
   const handleToggleAvailability = async () => {
     if (!workerProfile || !db) return;
+    const hasActiveJob = bookings.some(b => b.status === 'confirmed');
+    if (hasActiveJob) {
+      toast.error('You have an active booking. Availability will be enabled automatically after the job is completed.');
+      return;
+    }
     const newStatus = !workerProfile.available;
     try {
       await updateDoc(doc(db, 'workers', user.uid), {
@@ -82,6 +101,11 @@ const WorkerDashboard = () => {
   };
 
   const handleAccept = async (booking) => {
+    const hasActiveJob = bookings.some(b => b.status === 'confirmed');
+    if (hasActiveJob) {
+      toast.error('You already have an active booking. Complete it before accepting another.');
+      return;
+    }
     setProcessingId(booking.id);
     try {
       await updateDoc(doc(db, 'bookings', booking.id), {
@@ -92,6 +116,7 @@ const WorkerDashboard = () => {
       // Automatically set worker to Busy/Unavailable when they accept a booking
       await updateDoc(doc(db, 'workers', user.uid), {
         available: false,
+        activeBookingId: booking.id,
         updatedAt: serverTimestamp()
       });
 
@@ -177,22 +202,92 @@ const WorkerDashboard = () => {
   // Stats Calculations
   const pendingRequests = bookings.filter(b => b.status === 'pending');
   const upcomingJobs = bookings.filter(b => b.status === 'confirmed');
+  const hasActiveJob = upcomingJobs.length > 0;
   const completedJobs = bookings.filter(b => b.status === 'completed');
+  const cancelledJobs = bookings.filter(b => b.status === 'cancelled');
+  const rejectedJobs = bookings.filter(b => b.status === 'rejected');
 
   const totalOrders = bookings.length;
-  const ratingValue = workerProfile?.rating || 5.0;
-  const trustScore = workerProfile?.trustScore || 0;
+  
+  // Real-time aggregates
+  const completedCount = completedJobs.length;
+  const cancelledCount = cancelledJobs.length;
+  const rejectedCount = rejectedJobs.length;
+  
+  const totalEarnings = completedJobs.reduce((sum, b) => sum + (parseFloat(b.price) || 0), 0);
+  
+  const monthlyEarnings = completedJobs.reduce((sum, b) => {
+    if (b.createdAt) {
+      const bDate = new Date(b.createdAt.seconds * 1000);
+      const now = new Date();
+      if (bDate.getFullYear() === now.getFullYear() && bDate.getMonth() === now.getMonth()) {
+        return sum + (parseFloat(b.price) || 0);
+      }
+    }
+    return sum;
+  }, 0);
+
+  const ratedBookings = completedJobs.filter(b => b.rating);
+  const averageRating = ratedBookings.length
+    ? parseFloat((ratedBookings.reduce((sum, b) => sum + b.rating, 0) / ratedBookings.length).toFixed(1))
+    : 5.0;
+  const totalReviews = ratedBookings.length;
 
   const stats = [
-    { label: 'Total Orders', value: totalOrders, icon: '📋' },
-    { label: 'Pending', value: pendingRequests.length, icon: '⌛' },
-    { label: 'Completed', value: completedJobs.length, icon: '✅' },
-    { label: 'Trust Score', value: `${trustScore}%`, icon: '🤖' },
+    { label: 'Completed Jobs', value: completedCount, icon: '✅' },
+    { label: 'Monthly Earnings', value: `₹${monthlyEarnings}`, icon: '💰' },
+    { label: 'Total Earnings', value: `₹${totalEarnings}`, icon: '💳' },
+    { label: 'Average Rating', value: `${averageRating} ★ (${totalReviews})`, icon: '⭐' },
   ];
 
-  // Dummy analytics metrics based on real bookings
-  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const chartData = [1, 2, 4, 3, 5, 2, 6]; // representation of daily bookings
+  // Helper for Chart 6-months trends labels
+  const getLast6MonthsLabels = () => {
+    const labels = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      labels.push(d.toLocaleString('default', { month: 'short', year: '2-digit' }));
+    }
+    return labels;
+  };
+
+  // 1. Earnings Trend dataset (6 months)
+  const last6MonthsEarnings = Array(6).fill(0);
+  completedJobs.forEach(b => {
+    if (b.createdAt) {
+      const bDate = new Date(b.createdAt.seconds * 1000);
+      const now = new Date();
+      const diffMonths = (now.getFullYear() - bDate.getFullYear()) * 12 + (now.getMonth() - bDate.getMonth());
+      if (diffMonths >= 0 && diffMonths < 6) {
+        last6MonthsEarnings[5 - diffMonths] += (parseFloat(b.price) || 0);
+      }
+    }
+  });
+
+  // 2. Day of Week Orders dataset
+  const ordersPerDayOfWeek = Array(7).fill(0);
+  const daysLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  bookings.forEach(b => {
+    if (b.createdAt) {
+      const bDate = new Date(b.createdAt.seconds * 1000);
+      let dayIndex = bDate.getDay() - 1;
+      if (dayIndex < 0) dayIndex = 6;
+      ordersPerDayOfWeek[dayIndex]++;
+    }
+  });
+
+  // 3. Completed Jobs per Month dataset (6 months)
+  const last6MonthsJobsCount = Array(6).fill(0);
+  completedJobs.forEach(b => {
+    if (b.createdAt) {
+      const bDate = new Date(b.createdAt.seconds * 1000);
+      const now = new Date();
+      const diffMonths = (now.getFullYear() - bDate.getFullYear()) * 12 + (now.getMonth() - bDate.getMonth());
+      if (diffMonths >= 0 && diffMonths < 6) {
+        last6MonthsJobsCount[5 - diffMonths]++;
+      }
+    }
+  });
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-black pb-20">
@@ -201,7 +296,7 @@ const WorkerDashboard = () => {
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
             {workerProfile?.avatar ? (
-              <img src={workerProfile.avatar} alt={workerProfile.name} className="w-16 h-16 rounded-full object-cover border-2 border-white/40" />
+              <img src={formatImageUrl(workerProfile.avatar)} alt={workerProfile.name} className="w-16 h-16 rounded-full object-cover border-2 border-white/40" />
             ) : (
               <div className="w-16 h-16 rounded-full bg-white/20 border-2 border-white/40 flex items-center justify-center text-white font-black text-2xl">
                 {workerProfile?.name?.charAt(0) || 'W'}
@@ -237,14 +332,23 @@ const WorkerDashboard = () => {
         {/* Availability Toggle */}
         <div className={`flex items-center justify-between p-4 rounded-card border ${
           workerProfile?.available ? 'bg-green-500/20 border-green-400/30' : 'bg-red-500/20 border-red-400/30'
-        }`}>
+        } ${hasActiveJob ? 'opacity-80' : ''}`}>
           <div>
             <p className="font-bold text-white">{workerProfile?.available ? '🟢 Available for Jobs' : '🔴 Currently Busy'}</p>
-            <p className="text-blue-100 text-xs mt-0.5">{workerProfile?.available ? 'Customers can view and book your profile' : 'Hidden from search result listings'}</p>
+            {hasActiveJob ? (
+              <p className="text-amber-200 text-xs mt-0.5 font-semibold">
+                ⚠️ You have an active booking. Availability will be enabled automatically after the job is completed.
+              </p>
+            ) : (
+              <p className="text-blue-100 text-xs mt-0.5">
+                {workerProfile?.available ? 'Customers can view and book your profile' : 'Hidden from search result listings'}
+              </p>
+            )}
           </div>
           <button
             onClick={handleToggleAvailability}
-            className={`relative w-14 h-7 rounded-full transition-all duration-300 ${workerProfile?.available ? 'bg-green-400' : 'bg-gray-400'}`}
+            disabled={hasActiveJob}
+            className={`relative w-14 h-7 rounded-full transition-all duration-300 ${hasActiveJob ? 'cursor-not-allowed opacity-50' : ''} ${workerProfile?.available ? 'bg-green-400' : 'bg-gray-400'}`}
           >
             <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow transition-all duration-300 ${workerProfile?.available ? 'left-7' : 'left-0.5'}`} />
           </button>
@@ -330,8 +434,8 @@ const WorkerDashboard = () => {
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleAccept(req)}
-                      disabled={processingId === req.id}
-                      className="flex-1 py-2 bg-green-500 text-white rounded-button text-xs font-bold flex items-center justify-center gap-1.5 disabled:opacity-75"
+                      disabled={processingId === req.id || hasActiveJob}
+                      className="flex-1 py-2 bg-green-500 text-white rounded-button text-xs font-bold flex items-center justify-center gap-1.5 disabled:opacity-50"
                     >
                       {processingId === req.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
                       Accept Request
@@ -392,26 +496,112 @@ const WorkerDashboard = () => {
         </div>
 
         {/* Analytics Section */}
-        <div className="bg-white dark:bg-surface-dark rounded-card p-5 border border-gray-100 dark:border-gray-800 shadow-soft">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h4 className="font-bold text-gray-900 dark:text-white text-sm">Order volume trend</h4>
-              <p className="text-[10px] text-gray-400">Weekly completed booking statistics</p>
-            </div>
-            <Award size={18} className="text-primary-light" />
+        <div className="bg-white dark:bg-surface-dark rounded-card p-5 border border-gray-100 dark:border-gray-800 shadow-soft space-y-6">
+          <div>
+            <h4 className="font-bold text-gray-900 dark:text-white text-sm">Dashboard Analytics & Trends</h4>
+            <p className="text-[10px] text-gray-400">Real-time charts aggregated from your customer bookings</p>
           </div>
-          
-          {/* Custom Pure-CSS Analytics Chart */}
-          <div className="h-32 flex items-end justify-between gap-2 pt-2 px-2 border-b border-gray-150 dark:border-gray-850">
-            {chartData.map((val, idx) => (
-              <div key={idx} className="flex-1 flex flex-col items-center group cursor-pointer">
-                <div 
-                  className="w-full bg-primary-light/80 dark:bg-primary-dark/80 rounded-t-sm group-hover:bg-primary-light transition-all"
-                  style={{ height: `${val * 16}px` }}
+
+          <div className="grid gap-6 md:grid-cols-2">
+            {/* Earnings Chart */}
+            <div className="bg-gray-50 dark:bg-gray-900/50 p-4 rounded-xl border border-gray-100 dark:border-gray-800">
+              <span className="text-xs font-bold text-gray-700 dark:text-gray-300 block mb-3">💰 Earnings Trend (Last 6 Months)</span>
+              <div className="h-44">
+                <Line
+                  data={{
+                    labels: getLast6MonthsLabels(),
+                    datasets: [{
+                      label: 'Earnings (₹)',
+                      data: last6MonthsEarnings,
+                      borderColor: '#3b82f6',
+                      backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                      tension: 0.3,
+                      fill: true
+                    }]
+                  }}
+                  options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { y: { ticks: { font: { size: 9 } } }, x: { ticks: { font: { size: 9 } } } }
+                  }}
                 />
-                <span className="text-[9px] text-gray-400 mt-2">{weekdays[idx]}</span>
               </div>
-            ))}
+            </div>
+
+            {/* Order Volume Trend */}
+            <div className="bg-gray-50 dark:bg-gray-900/50 p-4 rounded-xl border border-gray-100 dark:border-gray-800">
+              <span className="text-xs font-bold text-gray-700 dark:text-gray-300 block mb-3">📅 Bookings by Day of Week</span>
+              <div className="h-44">
+                <Bar
+                  data={{
+                    labels: daysLabels,
+                    datasets: [{
+                      label: 'Orders',
+                      data: ordersPerDayOfWeek,
+                      backgroundColor: '#10b981',
+                      borderRadius: 4
+                    }]
+                  }}
+                  options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { y: { ticks: { font: { size: 9 } } }, x: { ticks: { font: { size: 9 } } } }
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Monthly Performance */}
+            <div className="bg-gray-50 dark:bg-gray-900/50 p-4 rounded-xl border border-gray-100 dark:border-gray-800">
+              <span className="text-xs font-bold text-gray-700 dark:text-gray-300 block mb-3">📈 Completed Orders per Month</span>
+              <div className="h-44">
+                <Bar
+                  data={{
+                    labels: getLast6MonthsLabels(),
+                    datasets: [{
+                      label: 'Jobs',
+                      data: last6MonthsJobsCount,
+                      backgroundColor: '#6366f1',
+                      borderRadius: 4
+                    }]
+                  }}
+                  options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { y: { ticks: { font: { size: 9 } } }, x: { ticks: { font: { size: 9 } } } }
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Job Completion Rate */}
+            <div className="bg-gray-50 dark:bg-gray-900/50 p-4 rounded-xl border border-gray-100 dark:border-gray-800">
+              <span className="text-xs font-bold text-gray-700 dark:text-gray-300 block mb-3">🔄 Job Completion Rate</span>
+              <div className="h-44 flex items-center justify-center">
+                {completedCount || cancelledCount || rejectedCount ? (
+                  <Doughnut
+                    data={{
+                      labels: ['Completed', 'Cancelled', 'Rejected'],
+                      datasets: [{
+                        data: [completedCount, cancelledCount, rejectedCount],
+                        backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
+                        borderWidth: 1
+                      }]
+                    }}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: { legend: { labels: { font: { size: 9 } } } }
+                    }}
+                  />
+                ) : (
+                  <span className="text-[10px] text-gray-400">No booking statistics yet.</span>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -1,31 +1,51 @@
 import React, { useState, useEffect } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import { Users, ClipboardCheck, Star, ShieldCheck, MessageSquare, AlertTriangle, ShieldX, HelpCircle, MessageCircle, X } from 'lucide-react';
-import { collection, onSnapshot, doc, updateDoc, getDocs } from 'firebase/firestore';
+import { Users, ClipboardCheck, Star, ShieldCheck, MessageSquare, AlertTriangle, ShieldX, HelpCircle, MessageCircle, X, Search, CheckCircle, RefreshCw, Send, Tag, ShieldAlert, Loader2 } from 'lucide-react';
+import { collection, onSnapshot, doc, updateDoc, getDocs, getDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, onValue } from 'firebase/database';
 import { db, rtdb } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
+import { Badge } from '../components/UI';
 import toast from 'react-hot-toast';
+import { formatImageUrl } from '../utils/helpers';
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const { userProfile } = useAuth();
   
   // Tab control
-  const [activeTab, setActiveTab] = useState('overview'); // overview | customers | workers | bookings | chats | reviews
+  const [activeTab, setActiveTab] = useState('overview'); // overview | customers | workers | bookings | chats | reviews | tickets
   
   // Database state
   const [customers, setCustomers] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [bookings, setBookings] = useState([]);
   const [chats, setChats] = useState({});
+  const [tickets, setTickets] = useState([]);
   
   // UI states
   const [loading, setLoading] = useState(true);
   const [disableWorkerId, setDisableWorkerId] = useState(null);
   const [disableReason, setDisableReason] = useState('');
   const [selectedChatRoomId, setSelectedChatRoomId] = useState(null);
+
+  // Worker Verification states
+  const [selectedWorkerVerification, setSelectedWorkerVerification] = useState(null);
+  const [privateWorkerDetails, setPrivateWorkerDetails] = useState(null);
+  const [loadingPrivate, setLoadingPrivate] = useState(false);
+  const [verificationNotes, setVerificationNotes] = useState('');
+
+  // Support ticket inspector states
+  const [selectedTicket, setSelectedTicket] = useState(null);
+  const [ticketReplyText, setTicketReplyText] = useState('');
+  const [ticketReplyLoading, setTicketReplyLoading] = useState(false);
+  
+  // Ticket filters
+  const [ticketFilterStatus, setTicketFilterStatus] = useState('all');
+  const [ticketFilterPriority, setTicketFilterPriority] = useState('all');
+  const [ticketFilterRole, setTicketFilterRole] = useState('all');
+  const [ticketSearch, setTicketSearch] = useState('');
 
   // Check admin authorization - only redirect if profile is loaded and role is NOT admin
   useEffect(() => {
@@ -74,11 +94,18 @@ const AdminDashboard = () => {
       });
     }
 
+    // 5. Fetch Tickets
+    const unsubTickets = onSnapshot(collection(db, 'tickets'), (snapshot) => {
+      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setTickets(list);
+    });
+
     return () => {
       unsubUsers();
       unsubWorkers();
       unsubBookings();
       unsubChats();
+      unsubTickets();
     };
   }, []);
 
@@ -107,6 +134,122 @@ const AdminDashboard = () => {
       throw new Error(errText);
     }
     return res.json();
+  };
+
+  // Support Ticket Handlers
+  const handleSendTicketReply = async (e) => {
+    if (e) e.preventDefault();
+    if (!ticketReplyText.trim() || !selectedTicket) return;
+
+    setTicketReplyLoading(true);
+    try {
+      const ticketRef = doc(db, 'tickets', selectedTicket.id);
+      const newReply = {
+        senderId: 'admin',
+        senderName: 'ServiConnect Administrator',
+        senderRole: 'admin',
+        message: ticketReplyText.trim(),
+        createdAt: new Date().toISOString(),
+      };
+
+      const updatedReplies = [...(selectedTicket.replies || []), newReply];
+      await updateDoc(ticketRef, {
+        replies: updatedReplies,
+        status: 'in_progress',
+        updatedAt: serverTimestamp()
+      });
+
+      // Send in-app notification to the ticket creator
+      await addDoc(collection(db, 'notifications'), {
+        recipientId: selectedTicket.userId,
+        title: 'Support Ticket Reply',
+        message: `Admin has replied to your ticket: "${ticketReplyText.trim().substring(0, 40)}..."`,
+        read: false,
+        createdAt: new Date().toISOString()
+      });
+
+      setTicketReplyText('');
+      toast.success('Reply sent successfully!');
+    } catch (err) {
+      console.error('Error replying to ticket:', err);
+      toast.error('Failed to send reply');
+    } finally {
+      setTicketReplyLoading(false);
+    }
+  };
+
+  const handleChangeTicketStatus = async (newStatus) => {
+    if (!selectedTicket) return;
+    try {
+      const ticketRef = doc(db, 'tickets', selectedTicket.id);
+      await updateDoc(ticketRef, {
+        status: newStatus,
+        updatedAt: serverTimestamp()
+      });
+      toast.success(`Ticket status updated to: ${newStatus}`);
+    } catch (err) {
+      console.error('Error changing ticket status:', err);
+      toast.error('Failed to update status');
+    }
+  };
+
+  // Worker Aadhaar Verification Handlers
+  const handleOpenVerification = async (worker) => {
+    setSelectedWorkerVerification(worker);
+    setVerificationNotes(worker.verificationNotes || '');
+    setLoadingPrivate(true);
+    try {
+      const docRef = doc(db, 'workers_private', worker.id);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        setPrivateWorkerDetails(docSnap.data());
+      } else {
+        setPrivateWorkerDetails(null);
+        toast.error('No private Aadhaar records found for this worker');
+      }
+    } catch (err) {
+      console.error('Error loading private details:', err);
+      toast.error('Could not access Aadhaar documents. Check firestore security rules.');
+    } finally {
+      setLoadingPrivate(false);
+    }
+  };
+
+  const handleUpdateVerificationStatus = async (status) => {
+    if (!selectedWorkerVerification) return;
+    try {
+      // 1. Update public workers doc
+      await updateDoc(doc(db, 'workers', selectedWorkerVerification.id), {
+        verificationStatus: status,
+        badge: status === 'verified' ? 'Trusted' : selectedWorkerVerification.badge,
+        verificationNotes: verificationNotes.trim()
+      });
+
+      // 2. Update private document
+      await updateDoc(doc(db, 'workers_private', selectedWorkerVerification.id), {
+        verificationStatus: status,
+        verificationNotes: verificationNotes.trim(),
+        updatedAt: serverTimestamp()
+      });
+
+      // 3. Create notification
+      await addDoc(collection(db, 'notifications'), {
+        recipientId: selectedWorkerVerification.id,
+        title: status === 'verified' ? 'Profile Verified! ✅' : status === 'reupload' ? 'Aadhaar Re-upload Required 🆔' : 'Verification Rejected ❌',
+        message: status === 'verified' 
+          ? 'Congratulations! Your profile has been verified by the administrator. A verified badge is now visible on your public page.' 
+          : `Verification update from admin: ${verificationNotes.trim() || 'Aadhaar verification update.'}`,
+        read: false,
+        createdAt: new Date().toISOString()
+      });
+
+      toast.success(`Worker status updated to: ${status}`);
+      setSelectedWorkerVerification(null);
+      setPrivateWorkerDetails(null);
+    } catch (err) {
+      console.error('Error updating verification status:', err);
+      toast.error('Failed to update verification status');
+    }
   };
 
   // Worker removal/disabling action
@@ -194,7 +337,8 @@ const AdminDashboard = () => {
           { id: 'workers', label: '🛠 Workers' },
           { id: 'bookings', label: '📋 Bookings' },
           { id: 'chats', label: '💬 Chats Inspector' },
-          { id: 'reviews', label: '⭐ Reviews' }
+          { id: 'reviews', label: '⭐ Reviews' },
+          { id: 'tickets', label: '🎟 Tickets' }
         ].map(tab => (
           <button
             key={tab.id}
@@ -324,7 +468,7 @@ const AdminDashboard = () => {
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           {w.avatar ? (
-                            <img src={w.avatar} className="w-9 h-9 rounded-full object-cover border" alt="" />
+                            <img src={formatImageUrl(w.avatar)} className="w-9 h-9 rounded-full object-cover border" alt="" />
                           ) : (
                             <div className="w-9 h-9 rounded-full bg-primary-light/20 flex items-center justify-center font-bold text-primary-light">
                               {w.name?.charAt(0)}
@@ -344,21 +488,31 @@ const AdminDashboard = () => {
                         <span className="text-[10px] text-gray-400 block font-bold capitalize">{w.badge}</span>
                       </td>
                       <td className="px-6 py-4">
-                        {w.disabled ? (
-                          <span className="px-2 py-0.5 bg-red-100 text-red-700 dark:bg-red-950/20 dark:text-red-400 text-[10px] rounded font-bold">
-                            Removed
+                        <div className="flex flex-col gap-1 items-start">
+                          {w.disabled ? (
+                            <span className="px-2 py-0.5 bg-red-100 text-red-700 dark:bg-red-950/20 dark:text-red-400 text-[10px] rounded font-bold">
+                              Removed
+                            </span>
+                          ) : w.available ? (
+                            <span className="px-2 py-0.5 bg-green-150 text-green-700 dark:bg-green-950/20 dark:text-green-400 text-[10px] rounded font-bold">
+                              Available
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-gray-150 text-gray-700 dark:bg-gray-800 dark:text-gray-400 text-[10px] rounded font-bold">
+                              Busy
+                            </span>
+                          )}
+                          <span className={`px-2 py-0.5 text-[9px] rounded font-bold uppercase ${
+                            w.verificationStatus === 'verified' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' :
+                            w.verificationStatus === 'reupload' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' :
+                            w.verificationStatus === 'rejected' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' :
+                            'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                          }`}>
+                            {w.verificationStatus || 'pending'}
                           </span>
-                        ) : w.available ? (
-                          <span className="px-2 py-0.5 bg-green-150 text-green-700 dark:bg-green-950/20 dark:text-green-400 text-[10px] rounded font-bold">
-                            Available
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 bg-gray-150 text-gray-700 dark:bg-gray-800 dark:text-gray-400 text-[10px] rounded font-bold">
-                            Busy
-                          </span>
-                        )}
+                        </div>
                       </td>
-                      <td className="px-6 py-4 text-right">
+                      <td className="px-6 py-4 text-right flex items-center justify-end gap-2">
                         {w.disabled ? (
                           <button
                             onClick={() => handleEnableWorker(w.id)}
@@ -367,12 +521,20 @@ const AdminDashboard = () => {
                             Re-enable
                           </button>
                         ) : (
-                          <button
-                            onClick={() => setDisableWorkerId(w.id)}
-                            className="px-2.5 py-1.5 bg-red-500 text-white rounded font-bold text-[10px] hover:bg-red-600 transition flex items-center gap-1 ml-auto"
-                          >
-                            <ShieldX size={12} /> Remove
-                          </button>
+                          <>
+                            <button
+                              onClick={() => handleOpenVerification(w)}
+                              className="px-2.5 py-1.5 bg-primary-light text-white rounded font-bold text-[10px] hover:bg-primary-light/95 transition flex items-center gap-1"
+                            >
+                              <ShieldCheck size={12} /> Verify
+                            </button>
+                            <button
+                              onClick={() => setDisableWorkerId(w.id)}
+                              className="px-2.5 py-1.5 bg-red-500 text-white rounded font-bold text-[10px] hover:bg-red-600 transition flex items-center gap-1"
+                            >
+                              <ShieldX size={12} /> Remove
+                            </button>
+                          </>
                         )}
                       </td>
                     </tr>
@@ -558,6 +720,229 @@ const AdminDashboard = () => {
             </div>
           </div>
         )}
+
+        {/* TICKETS TAB */}
+        {activeTab === 'tickets' && (
+          <div className="grid gap-6 md:grid-cols-3">
+            {/* Tickets List */}
+            <div className="bg-white dark:bg-surface-dark rounded-card border border-gray-150 dark:border-gray-800 p-4 shadow-soft h-[550px] flex flex-col">
+              <div className="space-y-3 pb-3 border-b mb-3">
+                <h3 className="font-bold text-gray-950 dark:text-white text-sm">Complaint Tickets</h3>
+                {/* Filters */}
+                <div className="grid grid-cols-3 gap-1.5 text-[10px]">
+                  <select
+                    value={ticketFilterStatus}
+                    onChange={e => setTicketFilterStatus(e.target.value)}
+                    className="p-1.5 border rounded bg-gray-50 dark:bg-gray-800 text-gray-800 dark:text-gray-200 outline-none"
+                  >
+                    <option value="all">All Status</option>
+                    <option value="open">Open</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="resolved">Resolved</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                  <select
+                    value={ticketFilterPriority}
+                    onChange={e => setTicketFilterPriority(e.target.value)}
+                    className="p-1.5 border rounded bg-gray-50 dark:bg-gray-800 text-gray-800 dark:text-gray-200 outline-none"
+                  >
+                    <option value="all">All Priority</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                  <select
+                    value={ticketFilterRole}
+                    onChange={e => setTicketFilterRole(e.target.value)}
+                    className="p-1.5 border rounded bg-gray-50 dark:bg-gray-800 text-gray-800 dark:text-gray-200 outline-none"
+                  >
+                    <option value="all">All Roles</option>
+                    <option value="customer">Customer</option>
+                    <option value="worker">Worker</option>
+                  </select>
+                </div>
+                {/* Search */}
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={ticketSearch}
+                    onChange={e => setTicketSearch(e.target.value)}
+                    placeholder="Search by subject/user..."
+                    className="w-full pl-7 pr-3 py-1.5 border text-[11px] rounded-lg outline-none bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white"
+                  />
+                  <Search size={11} className="absolute left-2.5 top-2.5 text-gray-400" />
+                </div>
+              </div>
+
+              {/* Tickets Map List */}
+              <div className="overflow-y-auto flex-1 space-y-2">
+                {tickets
+                  .filter(t => {
+                    if (ticketFilterStatus !== 'all' && t.status !== ticketFilterStatus) return false;
+                    if (ticketFilterPriority !== 'all' && t.priority !== ticketFilterPriority) return false;
+                    if (ticketFilterRole !== 'all' && t.userRole !== ticketFilterRole) return false;
+                    if (ticketSearch.trim() !== '') {
+                      const query = ticketSearch.toLowerCase();
+                      return (
+                        t.subject?.toLowerCase().includes(query) ||
+                        t.userName?.toLowerCase().includes(query) ||
+                        t.id?.toLowerCase().includes(query)
+                      );
+                    }
+                    return true;
+                  })
+                  .map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        setSelectedTicket(t);
+                        setTicketReplyText('');
+                      }}
+                      className={`w-full text-left p-3 rounded-lg border transition text-xs flex flex-col gap-1 ${
+                        selectedTicket?.id === t.id 
+                          ? 'border-primary-light bg-primary-light/5 text-primary-light font-semibold' 
+                          : 'border-gray-100 hover:bg-gray-50 dark:border-gray-800 text-gray-700 dark:text-gray-300'
+                      }`}
+                    >
+                      <div className="flex justify-between items-center w-full">
+                        <span className="font-mono text-[9px] text-gray-400">#{t.id}</span>
+                        <Badge variant={
+                          t.status === 'resolved' || t.status === 'completed' ? 'success' :
+                          t.status === 'in_progress' ? 'primary' :
+                          t.status === 'closed' ? 'danger' : 'warning'
+                        } className="py-0 text-[8px] uppercase">
+                          {t.status}
+                        </Badge>
+                      </div>
+                      <div className="font-bold truncate w-full">{t.subject}</div>
+                      <div className="flex justify-between items-center text-[9px] text-gray-400 mt-1 w-full">
+                        <span>👤 {t.userName} ({t.userRole})</span>
+                        <span>{t.createdAt ? new Date(t.createdAt.seconds * 1000).toLocaleDateString() : 'recent'}</span>
+                      </div>
+                    </button>
+                  ))}
+                {tickets.length === 0 && (
+                  <div className="text-center py-20 text-xs text-gray-400">
+                    No tickets found in database.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Ticket Inspector */}
+            <div className="bg-white dark:bg-surface-dark rounded-card border border-gray-150 dark:border-gray-800 p-4 shadow-soft md:col-span-2 h-[550px] flex flex-col">
+              {selectedTicket ? (
+                <>
+                  {/* Header info */}
+                  <div className="flex items-start justify-between pb-3 border-b mb-3 flex-wrap gap-2">
+                    <div>
+                      <span className="text-[10px] text-gray-400 uppercase font-mono block">Ticket Reference: #{selectedTicket.id}</span>
+                      <h4 className="font-bold text-gray-950 dark:text-white text-sm">{selectedTicket.subject}</h4>
+                      <p className="text-[10px] text-gray-500 mt-0.5">Category: <span className="font-bold text-primary-light">{selectedTicket.category}</span> | User: <span className="font-semibold">{selectedTicket.userName} ({selectedTicket.userEmail})</span></p>
+                    </div>
+                    <div className="flex gap-2">
+                      <select
+                        value={selectedTicket.status}
+                        onChange={e => handleChangeTicketStatus(e.target.value)}
+                        className="px-2 py-1 border rounded text-[10px] bg-gray-50 dark:bg-gray-800 font-bold"
+                      >
+                        <option value="open">Open</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="resolved">Resolved</option>
+                        <option value="closed">Closed</option>
+                      </select>
+                      <button 
+                        onClick={() => setSelectedTicket(null)}
+                        className="p-1 rounded-full hover:bg-gray-100"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Messages list */}
+                  <div className="flex-1 overflow-y-auto p-3 space-y-3.5 bg-gray-50 dark:bg-gray-900/50 rounded-xl border mb-3">
+                    {/* Original Complaint */}
+                    <div className="bg-white dark:bg-surface-dark border p-3 rounded-lg text-xs space-y-2">
+                      <div className="flex justify-between items-center text-[10px] text-gray-400 border-b pb-1">
+                        <span>Original Complaint Detail</span>
+                        <span>{selectedTicket.createdAt ? new Date(selectedTicket.createdAt.seconds * 1000).toLocaleString() : 'recent'}</span>
+                      </div>
+                      <p className="text-gray-800 dark:text-gray-200 leading-relaxed break-words whitespace-pre-wrap">{selectedTicket.description}</p>
+                      
+                      {selectedTicket.bookingId && (
+                        <div className="text-[10px] text-gray-400 bg-gray-50 dark:bg-gray-800 p-1.5 rounded">
+                          📌 <span className="font-bold text-gray-600 dark:text-gray-300">Booking ID:</span> {selectedTicket.bookingId}
+                        </div>
+                      )}
+
+                      {selectedTicket.screenshot && (
+                        <div className="space-y-1">
+                          <span className="text-[9px] text-gray-400 block font-bold">Screenshot Attached:</span>
+                          <a href={selectedTicket.screenshot} target="_blank" rel="noreferrer" className="block max-w-[200px] border rounded overflow-hidden aspect-video relative group">
+                            <img src={selectedTicket.screenshot} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="Screenshot" />
+                          </a>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Replies thread */}
+                    {(selectedTicket.replies || []).map((reply, idx) => {
+                      const isSelf = reply.senderRole === 'admin';
+                      return (
+                        <div key={idx} className={`flex gap-3 items-start max-w-[85%] ${isSelf ? 'ml-auto flex-row-reverse' : ''}`}>
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
+                            isSelf ? 'bg-red-500 text-white' : 'bg-primary-light/10 text-primary-light'
+                          }`}>
+                            {isSelf ? 'A' : reply.senderName.charAt(0)}
+                          </div>
+                          <div className={`border p-2.5 rounded-lg shadow-sm text-xs space-y-1 ${
+                            isSelf 
+                              ? 'bg-red-500/5 dark:bg-red-950/20 border-red-500/20 text-gray-800 dark:text-gray-200' 
+                              : 'bg-white dark:bg-surface-dark border-gray-150'
+                          }`}>
+                            <div className="flex justify-between items-center gap-4 text-[9px] text-gray-400 border-b pb-1">
+                              <span className="font-bold text-gray-700 dark:text-gray-300">{reply.senderName}</span>
+                              <span className="font-semibold uppercase tracking-wider">{reply.senderRole}</span>
+                            </div>
+                            <p className="leading-relaxed break-words whitespace-pre-wrap">{reply.message}</p>
+                            <span className="text-[8px] text-gray-400 text-right block mt-1">
+                              {reply.createdAt ? new Date(reply.createdAt).toLocaleString() : ''}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Send Form */}
+                  <form onSubmit={handleSendTicketReply} className="flex gap-2">
+                    <textarea
+                      value={ticketReplyText}
+                      onChange={e => setTicketReplyText(e.target.value)}
+                      placeholder="Write your support reply here (sends notification & email update)..."
+                      rows={1}
+                      disabled={selectedTicket.status === 'closed'}
+                      className="flex-1 px-4 py-2 text-xs border rounded-xl outline-none focus:border-primary-light dark:bg-gray-850 dark:border-gray-800 text-gray-900 dark:text-white resize-none"
+                    />
+                    <button
+                      type="submit"
+                      disabled={ticketReplyLoading || !ticketReplyText.trim() || selectedTicket.status === 'closed'}
+                      className="p-2.5 bg-primary-light text-white rounded-xl shadow flex items-center justify-center shrink-0 hover:bg-primary-light/95 disabled:opacity-50"
+                    >
+                      {ticketReplyLoading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                    </button>
+                  </form>
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center flex-1 text-center text-xs text-gray-400 select-none">
+                  <HelpCircle size={36} className="mb-2 text-gray-300" />
+                  Select a support ticket from the left panel to inspect details and write replies.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* DISABLING/REMOVING WORKER REASON MODAL */}
@@ -593,6 +978,120 @@ const AdminDashboard = () => {
                   Disable Worker
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* WORKER VERIFICATION DETAIL MODAL */}
+        {selectedWorkerVerification && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+            <div className="bg-white dark:bg-gray-900 border border-gray-250 dark:border-gray-800 rounded-card p-6 max-w-2xl w-full shadow-2xl space-y-5 my-8">
+              <div className="flex justify-between items-center pb-2 border-b">
+                <div className="flex items-center gap-2 text-primary-light">
+                  <ShieldCheck size={22} />
+                  <h3 className="font-bold text-lg text-gray-900 dark:text-white">Verify Worker Identity & Profile</h3>
+                </div>
+                <button
+                  onClick={() => { setSelectedWorkerVerification(null); setPrivateWorkerDetails(null); }}
+                  className="p-1 rounded-full hover:bg-gray-100"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {loadingPrivate ? (
+                <div className="py-12 flex flex-col items-center justify-center gap-2">
+                  <Loader2 className="animate-spin text-primary-light" size={24} />
+                  <span className="text-[10px] text-gray-400">Loading private verification documents...</span>
+                </div>
+              ) : (
+                <div className="space-y-4 text-xs">
+                  {/* Public details preview */}
+                  <div className="grid grid-cols-2 gap-4 bg-gray-50 dark:bg-gray-850 p-3 rounded-lg">
+                    <div>
+                      <span className="text-[10px] text-gray-400 block font-semibold uppercase">Worker Details</span>
+                      <span className="font-bold text-gray-800 dark:text-white text-sm block">{selectedWorkerVerification.name}</span>
+                      <span className="text-gray-500 mt-1 block">Category: <span className="font-bold text-primary-light uppercase">{selectedWorkerVerification.category}</span></span>
+                      <span className="text-gray-500 block">Exp: {selectedWorkerVerification.experience} Years</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-gray-400 block font-semibold uppercase">Location Information (OSM Geocoded)</span>
+                      <span className="text-gray-800 dark:text-white font-semibold block mt-1 font-sans">Address: {selectedWorkerVerification.address || 'N/A'}</span>
+                      <span className="text-gray-500 block mt-0.5">City: {selectedWorkerVerification.city || 'N/A'} | District: {selectedWorkerVerification.district || 'N/A'}</span>
+                      <span className="text-gray-500 block">State: {selectedWorkerVerification.state || 'N/A'} | Country: {selectedWorkerVerification.country || 'N/A'}</span>
+                    </div>
+                  </div>
+
+                  {/* Private Aadhaar documents */}
+                  <div>
+                    <span className="text-[10px] text-gray-400 block font-bold uppercase mb-2">Private Aadhaar Identification</span>
+                    {privateWorkerDetails ? (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <span className="text-[9px] font-bold text-gray-500">Aadhaar Front Side:</span>
+                          {privateWorkerDetails.aadhaarFront ? (
+                            <a href={privateWorkerDetails.aadhaarFront} target="_blank" rel="noreferrer" className="block border rounded-lg overflow-hidden aspect-video relative group">
+                              <img src={privateWorkerDetails.aadhaarFront} className="w-full h-full object-cover group-hover:scale-102 transition-transform" alt="Aadhaar Front" />
+                              <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white text-[10px] font-bold">Open Full View 🌐</div>
+                            </a>
+                          ) : (
+                            <div className="aspect-video bg-gray-100 border border-dashed rounded-lg flex items-center justify-center text-gray-400">Not Uploaded</div>
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-[9px] font-bold text-gray-500">Aadhaar Back Side:</span>
+                          {privateWorkerDetails.aadhaarBack ? (
+                            <a href={privateWorkerDetails.aadhaarBack} target="_blank" rel="noreferrer" className="block border rounded-lg overflow-hidden aspect-video relative group">
+                              <img src={privateWorkerDetails.aadhaarBack} className="w-full h-full object-cover group-hover:scale-102 transition-transform" alt="Aadhaar Back" />
+                              <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white text-[10px] font-bold">Open Full View 🌐</div>
+                            </a>
+                          ) : (
+                            <div className="aspect-video bg-gray-100 border border-dashed rounded-lg flex items-center justify-center text-gray-400">Not Uploaded</div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-4 bg-red-50 dark:bg-red-950/20 text-red-650 border border-red-200 dark:border-red-900 rounded-lg text-center font-semibold">
+                        ❌ Private Aadhaar files not found for this profile.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Verification Notes */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-gray-400 font-bold block uppercase">Verification Status Notes / Reason for rejection</label>
+                    <textarea
+                      rows={2.5}
+                      value={verificationNotes}
+                      onChange={e => setVerificationNotes(e.target.value)}
+                      placeholder="Add internal feedback notes here. Visible to worker on request/re-upload request..."
+                      className="w-full px-3 py-2 border rounded-lg bg-gray-50 dark:bg-gray-805 text-gray-900 dark:text-white outline-none focus:border-primary-light resize-none"
+                    />
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-2.5 pt-2 border-t flex-wrap">
+                    <button
+                      onClick={() => handleUpdateVerificationStatus('verified')}
+                      className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg flex-1 flex items-center justify-center gap-1 shadow"
+                    >
+                      <ShieldCheck size={14} /> Approve Profile
+                    </button>
+                    <button
+                      onClick={() => handleUpdateVerificationStatus('reupload')}
+                      className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg flex-1 flex items-center justify-center gap-1 shadow"
+                    >
+                      <RefreshCw size={14} /> Request Re-upload
+                    </button>
+                    <button
+                      onClick={() => handleUpdateVerificationStatus('rejected')}
+                      className="px-4 py-2 bg-red-500 hover:bg-red-650 text-white font-bold rounded-lg flex-1 flex items-center justify-center gap-1 shadow"
+                    >
+                      <ShieldAlert size={14} /> Reject
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

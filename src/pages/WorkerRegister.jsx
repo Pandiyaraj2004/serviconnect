@@ -2,7 +2,7 @@ import { Fragment, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check, Loader2, Upload, MapPin, DollarSign } from 'lucide-react';
-import { INDIAN_CITIES, SERVICE_CATEGORIES, LANGUAGES } from '../utils/helpers';
+import { INDIAN_CITIES, SERVICE_CATEGORIES, LANGUAGES, formatImageUrl } from '../utils/helpers';
 import { generateSkillQuestions, evaluateWorkerProfile } from '../lib/gemini';
 import LocationPickerModal from '../components/LocationPickerModal';
 import toast from 'react-hot-toast';
@@ -13,7 +13,7 @@ import { compressImage } from '../utils/imageCompression';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 6;
 
 
 const ProgressBar = ({ step }) => (
@@ -33,7 +33,7 @@ const ProgressBar = ({ step }) => (
   </div>
 );
 
-const STEP_TITLES = ['Basic Details', 'Work Photos', 'Language', 'Skill Test', 'Your Badge'];
+const STEP_TITLES = ['Basic Details', 'Work Photos', 'Aadhaar Upload', 'Language', 'Skill Test', 'Your Badge'];
 
 const WorkerRegister = () => {
   const navigate = useNavigate();
@@ -49,6 +49,9 @@ const WorkerRegister = () => {
     category: '',
     experience: '',
     city: '',
+    district: '',
+    state: '',
+    country: '',
     bio: '',
     language: '',
     pricingType: 'Hourly', // Hourly / Daily / Fixed
@@ -58,7 +61,18 @@ const WorkerRegister = () => {
     lng: 72.877,
     avatar: '',
     photos: [],
+    aadhaarFront: '',
+    aadhaarBack: '',
   });
+
+  const [cityQuery, setCityQuery] = useState('');
+  const [citySuggestions, setCitySuggestions] = useState([]);
+  const [searchingCity, setSearchingCity] = useState(false);
+
+  const [aadhaarFrontUploading, setAadhaarFrontUploading] = useState(false);
+  const [aadhaarFrontProgress, setAadhaarFrontProgress] = useState(0);
+  const [aadhaarBackUploading, setAadhaarBackUploading] = useState(false);
+  const [aadhaarBackProgress, setAadhaarBackProgress] = useState(0);
 
   const [questions, setQuestions] = useState([]);
   const [currentQ, setCurrentQ] = useState(0);
@@ -320,6 +334,116 @@ const WorkerRegister = () => {
     }
   };
 
+  const searchCityNominatim = async (queryStr) => {
+    if (!queryStr.trim()) return;
+    setSearchingCity(true);
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryStr)}&countrycodes=in&addressdetails=1&limit=5`, {
+        headers: { 'Accept-Language': 'en', 'User-Agent': 'ServiConnect-App' }
+      });
+      const data = await res.json();
+      setCitySuggestions(data || []);
+    } catch (err) {
+      console.warn('City search Nominatim error:', err);
+      toast.error('Error searching cities');
+    } finally {
+      setSearchingCity(false);
+    }
+  };
+
+  const selectCitySuggestion = (item) => {
+    const addr = item.address;
+    const city = addr ? (addr.city || addr.town || addr.village || addr.suburb || '') : '';
+    const district = addr ? (addr.county || addr.state_district || addr.district || '') : '';
+    const state = addr ? (addr.state || '') : '';
+    const country = addr ? (addr.country || '') : '';
+    const lat = parseFloat(item.lat);
+    const lng = parseFloat(item.lon);
+    
+    setForm(prev => ({
+      ...prev,
+      city,
+      district,
+      state,
+      country,
+      lat,
+      lng,
+      address: item.display_name
+    }));
+    setCityQuery(city);
+    setCitySuggestions([]);
+  };
+
+  const handleAadhaarUpload = async (e, side) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error('Invalid file type. Only JPG, JPEG, PNG, and WEBP are allowed.');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('File size too large. Maximum limit is 5 MB.');
+      return;
+    }
+
+    const setUploading = side === 'front' ? setAadhaarFrontUploading : setAadhaarBackUploading;
+    const setProgress = side === 'front' ? setAadhaarFrontProgress : setAadhaarBackProgress;
+    
+    setUploading(true);
+    setProgress(0);
+    const toastId = toast.loading(`Compressing Aadhaar ${side} photo...`);
+    try {
+      const compressedFile = await compressImage(file);
+      toast.loading(`Uploading Aadhaar ${side}...`, { id: toastId });
+      
+      const formData = new FormData();
+      formData.append('image', compressedFile);
+      formData.append('workerId', user?.uid || 'worker');
+      formData.append('side', side);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_URL}/api/upload/aadhaar`, true);
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          setProgress(percent);
+        }
+      });
+
+      const uploadPromise = new Promise((resolve, reject) => {
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              resolve(JSON.parse(xhr.responseText));
+            } catch {
+              reject(new Error('Invalid response'));
+            }
+          } else {
+            reject(new Error('Upload failed'));
+          }
+        };
+        xhr.onerror = () => reject(new Error('Network error'));
+        xhr.send(formData);
+      });
+
+      const res = await uploadPromise;
+      if (res.url) {
+        setForm(prev => ({ ...prev, [side === 'front' ? 'aadhaarFront' : 'aadhaarBack']: res.url }));
+        toast.success(`Aadhaar ${side} uploaded successfully!`, { id: toastId });
+      } else {
+        throw new Error('No url returned');
+      }
+    } catch (err) {
+      toast.error(`Upload failed: ${err.message}`, { id: toastId });
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const startSkillTest = async () => {
     setLoading(true);
     try {
@@ -478,12 +602,53 @@ const WorkerRegister = () => {
               </div>
 
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 block">City *</label>
-                <select value={form.city} onChange={e => setForm({ ...form, city: e.target.value })}
-                  className="w-full px-4 py-3 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-input text-sm text-gray-900 dark:text-white outline-none">
-                  <option value="">Select city</option>
-                  {INDIAN_CITIES.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 block">Search or Enter City *</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Search city (e.g. Mumbai)..."
+                    value={cityQuery}
+                    onChange={e => {
+                      setCityQuery(e.target.value);
+                      setForm(prev => ({ ...prev, city: e.target.value }));
+                    }}
+                    className="flex-1 px-4 py-3 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-input text-sm text-gray-900 dark:text-white outline-none focus:border-primary-light"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => searchCityNominatim(cityQuery)}
+                    disabled={searchingCity}
+                    className="px-4 py-3 bg-primary-light text-white text-xs font-bold rounded-input hover:bg-primary-light/95 disabled:opacity-75 shrink-0"
+                  >
+                    {searchingCity ? 'Searching...' : 'Search'}
+                  </button>
+                </div>
+                {citySuggestions.length > 0 && (
+                  <div className="mt-2 bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-750 rounded-xl shadow-lg max-h-40 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800 text-xs">
+                    {citySuggestions.map((item, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => selectCitySuggestion(item)}
+                        className="w-full text-left px-4 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 truncate"
+                      >
+                        🏙️ {item.display_name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {/* Auto detected locations info panel */}
+                {(form.district || form.state || form.country) && (
+                  <div className="mt-2 bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800/80 rounded-xl p-3 text-[11px] text-gray-500 dark:text-gray-400 space-y-1">
+                    <p className="font-semibold text-gray-700 dark:text-gray-350">📍 Automatically Detected Location Details:</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div><span className="font-bold">City:</span> {form.city || 'N/A'}</div>
+                      <div><span className="font-bold">District:</span> {form.district || 'N/A'}</div>
+                      <div><span className="font-bold">State:</span> {form.state || 'N/A'}</div>
+                      <div><span className="font-bold">Country:</span> {form.country || 'N/A'}</div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -513,7 +678,19 @@ const WorkerRegister = () => {
               <LocationPickerModal
                 isOpen={isMapOpen}
                 onClose={() => setIsMapOpen(false)}
-                onSave={({ lat, lng, address }) => setForm(prev => ({ ...prev, lat, lng, address }))}
+                onSave={({ lat, lng, address, city, district, state, country }) => {
+                  setForm(prev => ({
+                    ...prev,
+                    lat,
+                    lng,
+                    address,
+                    city: city || prev.city,
+                    district: district || prev.district,
+                    state: state || prev.state,
+                    country: country || prev.country
+                  }));
+                  if (city) setCityQuery(city);
+                }}
                 initialLat={form.lat}
                 initialLng={form.lng}
                 initialAddress={form.address}
@@ -545,7 +722,7 @@ const WorkerRegister = () => {
                 <label className="text-sm font-bold text-gray-700 dark:text-gray-300 block mb-2">Profile Photo *</label>
                 <div className="flex items-center gap-4">
                   {form.avatar ? (
-                    <img src={form.avatar} alt="Profile preview" className="w-16 h-16 rounded-full object-cover border" />
+                    <img src={formatImageUrl(form.avatar)} alt="Profile preview" className="w-16 h-16 rounded-full object-cover border" />
                   ) : (
                     <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-gray-400 text-xs text-center border">
                       No Photo
@@ -597,7 +774,7 @@ const WorkerRegister = () => {
                 <div className="grid grid-cols-4 gap-2 mb-4">
                   {form.photos.map((url, i) => (
                     <div key={i} className="aspect-square bg-gray-100 dark:bg-gray-800 rounded-xl overflow-hidden relative group border">
-                      <img src={url} alt={`Work ${i+1}`} className="w-full h-full object-cover" />
+                      <img src={formatImageUrl(url)} alt={`Work ${i+1}`} className="w-full h-full object-cover" />
                       <button
                         type="button"
                         onClick={() => handleDeletePhoto(url)}
@@ -650,8 +827,106 @@ const WorkerRegister = () => {
             </div>
           )}
 
-          {/* STEP 3: Language Selection */}
+          {/* STEP 3: Aadhaar Document Upload */}
           {step === 3 && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Aadhaar Card Verification</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                  Please upload clear photos of your Aadhaar card. Aadhaar documents are stored securely and are visible only to the administrator.
+                </p>
+              </div>
+
+              {/* Aadhaar Front */}
+              <div className="bg-white dark:bg-surface-dark border border-gray-150 dark:border-gray-850 p-4 rounded-xl">
+                <label className="text-sm font-bold text-gray-700 dark:text-gray-300 block mb-2">Aadhaar Front Side *</label>
+                <div className="flex items-center gap-4">
+                  {form.aadhaarFront ? (
+                    <img src={form.aadhaarFront} alt="Aadhaar Front preview" className="w-20 h-12 object-cover border rounded" />
+                  ) : (
+                    <div className="w-20 h-12 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center text-gray-400 text-xs border">
+                      🆔 Front Image
+                    </div>
+                  )}
+                  <div className="flex-1">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      id="aadhaar-front-upload"
+                      className="hidden"
+                      onChange={e => handleAadhaarUpload(e, 'front')}
+                      disabled={aadhaarFrontUploading}
+                    />
+                    <label htmlFor="aadhaar-front-upload" className={`px-4 py-2 border rounded-button text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 ${aadhaarFrontUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                      <Upload size={14} /> {form.aadhaarFront ? 'Change Front Image' : 'Upload Front Image'}
+                    </label>
+                    
+                    {aadhaarFrontUploading && (
+                      <div className="mt-2.5">
+                        <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+                          <span>Uploading front Aadhaar...</span>
+                          <span>{aadhaarFrontProgress}%</span>
+                        </div>
+                        <div className="w-full bg-gray-100 dark:bg-gray-800 h-1 rounded-full overflow-hidden">
+                          <div className="bg-primary-light dark:bg-primary-dark h-full transition-all duration-300" style={{ width: `${aadhaarFrontProgress}%` }} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Aadhaar Back */}
+              <div className="bg-white dark:bg-surface-dark border border-gray-150 dark:border-gray-850 p-4 rounded-xl">
+                <label className="text-sm font-bold text-gray-700 dark:text-gray-300 block mb-2">Aadhaar Back Side (Optional)</label>
+                <div className="flex items-center gap-4">
+                  {form.aadhaarBack ? (
+                    <img src={form.aadhaarBack} alt="Aadhaar Back preview" className="w-20 h-12 object-cover border rounded" />
+                  ) : (
+                    <div className="w-20 h-12 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center text-gray-400 text-xs border">
+                      🆔 Back Image
+                    </div>
+                  )}
+                  <div className="flex-1">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      id="aadhaar-back-upload"
+                      className="hidden"
+                      onChange={e => handleAadhaarUpload(e, 'back')}
+                      disabled={aadhaarBackUploading}
+                    />
+                    <label htmlFor="aadhaar-back-upload" className={`px-4 py-2 border rounded-button text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 ${aadhaarBackUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                      <Upload size={14} /> {form.aadhaarBack ? 'Change Back Image' : 'Upload Back Image'}
+                    </label>
+                    
+                    {aadhaarBackUploading && (
+                      <div className="mt-2.5">
+                        <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+                          <span>Uploading back Aadhaar...</span>
+                          <span>{aadhaarBackProgress}%</span>
+                        </div>
+                        <div className="w-full bg-gray-100 dark:bg-gray-800 h-1 rounded-full overflow-hidden">
+                          <div className="bg-primary-light dark:bg-primary-dark h-full transition-all duration-300" style={{ width: `${aadhaarBackProgress}%` }} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={nextStep}
+                disabled={!form.aadhaarFront || aadhaarFrontUploading || aadhaarBackUploading}
+                className="w-full py-3 bg-primary-light dark:bg-primary-dark text-white rounded-button font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                Continue <ArrowRight size={18} />
+              </button>
+            </div>
+          )}
+
+          {/* STEP 4: Language Selection */}
+          {step === 4 && (
             <div className="space-y-6">
               <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Choose your language</h2>
               <p className="text-gray-500 dark:text-gray-400 text-sm">The AI skill test will be conducted in your chosen language</p>
@@ -690,8 +965,8 @@ const WorkerRegister = () => {
             </div>
           )}
 
-          {/* STEP 4: Skill Test */}
-          {step === 4 && (
+          {/* STEP 5: Skill Test */}
+          {step === 5 && (
             <div className="space-y-6">
               <div className="flex justify-between items-center">
                 <h2 className="text-xl font-bold text-gray-900 dark:text-white">Skill Test</h2>
@@ -735,8 +1010,8 @@ const WorkerRegister = () => {
             </div>
           )}
 
-          {/* STEP 5: Badge Result */}
-          {step === 5 && (
+          {/* STEP 6: Badge Result */}
+          {step === 6 && (
             <div className="text-center space-y-6">
               {(() => {
                 const finalScore = totalScore;
@@ -783,6 +1058,9 @@ const WorkerRegister = () => {
                             category: form.category,
                             experience: form.experience,
                             city: form.city,
+                            district: form.district || '',
+                            state: form.state || '',
+                            country: form.country || '',
                             pricingType: form.pricingType,
                             price: parseFloat(form.price),
                             address: form.address.trim(),
@@ -797,10 +1075,22 @@ const WorkerRegister = () => {
                             trustScore: finalScore,
                             skillAnswers: answers,
                             available: true,
+                            activeBookingId: null,
                             disabled: false,
+                            verificationStatus: 'pending',
                             updatedAt: serverTimestamp(),
                             createdAt: serverTimestamp(),
                           }, { merge: true });
+
+                          await setDoc(doc(db, 'workers_private', user.uid), {
+                            uid: user.uid,
+                            aadhaarFront: form.aadhaarFront,
+                            aadhaarBack: form.aadhaarBack || '',
+                            verificationStatus: 'pending',
+                            verificationNotes: '',
+                            updatedAt: serverTimestamp(),
+                            createdAt: serverTimestamp(),
+                          });
                           
                           await updateUserProfile({
                             role: 'worker',

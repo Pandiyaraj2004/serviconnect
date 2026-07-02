@@ -1,16 +1,17 @@
 import { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, MapPin, Calendar, Clock, Info, CheckCircle, Loader2 } from 'lucide-react';
-import { sendWorkerBookingNotification } from '../utils/helpers';
+import { ArrowLeft, MapPin, Calendar, Clock, Info, CheckCircle, Loader2, Search } from 'lucide-react';
+import { sendWorkerBookingNotification, formatImageUrl } from '../utils/helpers';
 import { createNotification, NOTIF_TEMPLATES } from '../utils/notifications';
 import { addDoc, collection, doc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
-import { MapContainer, TileLayer, Marker } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import toast from 'react-hot-toast';
+import LocationPickerModal from '../components/LocationPickerModal';
 
 // Fix Leaflet default icon paths
 delete L.Icon.Default.prototype._getIconUrl;
@@ -20,6 +21,17 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
 });
 
+
+// Helper component to center Leaflet map
+function ChangeMapCenter({ center }) {
+  const map = useMap();
+  useEffect(() => {
+    if (center) {
+      map.setView(center, map.getZoom());
+    }
+  }, [center, map]);
+  return null;
+}
 
 const BookingPage = () => {
   const navigate = useNavigate();
@@ -33,12 +45,20 @@ const BookingPage = () => {
   const [selectedTime, setSelectedTime] = useState('');
   const [problem, setProblem] = useState('');
   const [address, setAddress] = useState('');
+  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [bookingId, setBookingId] = useState('');
 
-  // Initialize address from userProfile once it loads
+  // Initialize address and coordinates from userProfile once it loads
   useEffect(() => {
     if (userProfile?.address && !address) {
       setAddress(userProfile.address);
+    }
+    if (userProfile?.lat && userProfile?.lng && !selectedLocation) {
+      setSelectedLocation({
+        lat: userProfile.lat,
+        lng: userProfile.lng
+      });
     }
   }, [userProfile]);
 
@@ -121,6 +141,8 @@ const BookingPage = () => {
         timeSlot: selectedTime,
         problemDescription: problem.trim(),
         address: address.trim(),
+        latitude: selectedLocation?.lat || null,
+        longitude: selectedLocation?.lng || null,
         status: 'pending',
         paymentMode: 'cash',
         createdAt: serverTimestamp(),
@@ -199,9 +221,13 @@ const BookingPage = () => {
           <motion.div key="form" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="px-4 py-6 space-y-4 max-w-xl mx-auto">
             {/* Worker Summary */}
             <div className="bg-white dark:bg-surface-dark rounded-card p-4 border border-gray-100 dark:border-gray-800 flex items-center gap-4">
-              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary-light to-blue-400 flex items-center justify-center text-white font-black text-xl">
-                {worker.avatar}
-              </div>
+              {worker.avatar ? (
+                <img src={formatImageUrl(worker.avatar)} alt={worker.name} className="w-16 h-16 rounded-full object-cover border shrink-0" />
+              ) : (
+                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary-light to-blue-400 flex items-center justify-center text-white font-black text-xl shrink-0">
+                  {worker.name.charAt(0)}
+                </div>
+              )}
               <div>
                 <h3 className="font-bold text-gray-900 dark:text-white">{worker.name}</h3>
                 <p className="text-sm text-gray-500 dark:text-gray-400">{worker.category}</p>
@@ -271,19 +297,42 @@ const BookingPage = () => {
               <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
                 <MapPin size={16} className="text-primary-light dark:text-primary-dark" /> Service Address *
               </label>
-              <textarea
-                rows={2}
-                placeholder="Enter your full address..."
-                value={address}
-                onChange={e => setAddress(e.target.value)}
-                className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-input text-sm text-gray-900 dark:text-white outline-none focus:border-primary-light dark:focus:border-primary-dark resize-none mb-3"
-              />
+              <div className="flex gap-2 mb-3">
+                <textarea
+                  rows={2}
+                  placeholder="Enter your full address..."
+                  value={address}
+                  onChange={e => setAddress(e.target.value)}
+                  className="flex-1 px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-input text-sm text-gray-900 dark:text-white outline-none focus:border-primary-light dark:focus:border-primary-dark resize-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setIsLocationModalOpen(true)}
+                  className="px-4 bg-primary-light/10 text-primary-light border border-primary-light/20 rounded-xl hover:bg-primary-light/20 transition-colors flex flex-col items-center justify-center gap-1 shrink-0 text-xs font-semibold"
+                >
+                  <Search size={16} />
+                  <span>Search/Map</span>
+                </button>
+              </div>
               <div className="h-36 rounded-xl overflow-hidden border border-gray-100 dark:border-gray-800">
-                <MapContainer center={[19.076, 72.877]} zoom={14} style={{ height: '100%', width: '100%' }} zoomControl={false} dragging={false}>
+                <MapContainer center={selectedLocation ? [selectedLocation.lat, selectedLocation.lng] : [19.076, 72.877]} zoom={14} style={{ height: '100%', width: '100%' }} zoomControl={false} dragging={false}>
                   <TileLayer attribution='© OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                  <Marker position={[19.076, 72.877]} />
+                  <Marker position={selectedLocation ? [selectedLocation.lat, selectedLocation.lng] : [19.076, 72.877]} />
+                  <ChangeMapCenter center={selectedLocation ? [selectedLocation.lat, selectedLocation.lng] : [19.076, 72.877]} />
                 </MapContainer>
               </div>
+
+              <LocationPickerModal
+                isOpen={isLocationModalOpen}
+                onClose={() => setIsLocationModalOpen(false)}
+                onSave={(loc) => {
+                  setAddress(loc.address);
+                  setSelectedLocation({ lat: loc.lat, lng: loc.lng });
+                }}
+                initialLat={selectedLocation?.lat}
+                initialLng={selectedLocation?.lng}
+                initialAddress={address}
+              />
             </div>
 
             {/* Info banners */}

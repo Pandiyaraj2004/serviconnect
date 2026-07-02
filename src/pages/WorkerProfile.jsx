@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Share2, Star, MapPin, MessageCircle, X, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, Share2, Star, MapPin, MessageCircle, X, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { Badge } from '../components/UI';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import toast from 'react-hot-toast';
+import { formatImageUrl } from '../utils/helpers';
 
 const TrustScoreRing = ({ score }) => {
   const [display, setDisplay] = useState(0);
@@ -198,7 +199,7 @@ const WorkerProfile = () => {
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
         <div className="absolute -bottom-12 left-4 flex items-end gap-4">
           {worker.avatar ? (
-            <img src={worker.avatar} alt={worker.name} className="w-24 h-24 rounded-full object-cover border-4 border-white dark:border-gray-900 shadow-xl" />
+            <img src={formatImageUrl(worker.avatar)} alt={worker.name} className="w-24 h-24 rounded-full object-cover border-4 border-white dark:border-gray-900 shadow-xl" />
           ) : (
             <div className="w-24 h-24 rounded-full bg-gradient-to-br from-primary-light to-blue-400 flex items-center justify-center text-white font-black text-3xl border-4 border-white dark:border-gray-900 shadow-xl">
               {worker.name.charAt(0)}
@@ -222,6 +223,11 @@ const WorkerProfile = () => {
             </div>
           </div>
           <div className="flex flex-col gap-2 items-end">
+            {worker.verificationStatus === 'verified' && (
+              <Badge variant="success" className="flex items-center gap-1 bg-green-500 text-white font-bold">
+                <ShieldCheck size={12} className="text-white" /> Verified Worker
+              </Badge>
+            )}
             {worker.badge && <Badge variant={worker.badge === 'AI Verified' ? 'ai' : 'primary'}>🤖 {worker.badge}</Badge>}
             {worker.skillLevelBadge && <Badge variant="success">{worker.skillLevelBadge}</Badge>}
             <Badge variant={worker.available ? 'success' : 'default'}>
@@ -278,7 +284,7 @@ const WorkerProfile = () => {
                 onClick={() => setLightboxPhoto(i)}
                 className="aspect-square bg-gray-100 dark:bg-gray-800 rounded-xl overflow-hidden cursor-pointer border"
               >
-                <img src={photo} alt={`Work ${i+1}`} className="w-full h-full object-cover" />
+                <img src={formatImageUrl(photo)} alt={`Work ${i+1}`} className="w-full h-full object-cover" />
               </motion.div>
             ))}
           </div>
@@ -330,7 +336,7 @@ const WorkerProfile = () => {
             onClick={() => setLightboxPhoto(null)}
           >
             <button className="absolute top-4 right-4 text-white p-2" aria-label="Close lightbox"><X size={24} /></button>
-            <img src={worker.photos[lightboxPhoto]} alt="Enlarged work photo" className="max-w-full max-h-[80vh] rounded object-contain border border-white/10" />
+            <img src={formatImageUrl(worker.photos[lightboxPhoto])} alt="Enlarged work photo" className="max-w-full max-h-[80vh] rounded object-contain border border-white/10" />
           </motion.div>
         )}
       </AnimatePresence>

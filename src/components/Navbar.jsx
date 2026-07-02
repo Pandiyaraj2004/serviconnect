@@ -31,11 +31,37 @@ const Navbar = ({ isAuthPage = false }) => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  const navLinks = [
-    { name: 'How it works', href: '/#how-it-works' },
-    { name: 'For Workers', href: '/worker-register' },
-    { name: 'About', href: '/about' },
-  ];
+  const getNavLinks = () => {
+    if (!user) {
+      return [
+        { name: 'How it works', href: '/#how-it-works' },
+        { name: 'For Workers', href: '/worker-register' },
+        { name: 'About', href: '/about' },
+      ];
+    }
+    const role = userProfile?.role || 'customer';
+    if (role === 'admin') {
+      return [
+        { name: 'Dashboard', href: '/admin' },
+        { name: 'Activity', href: '/notifications' },
+        { name: 'Profile Settings', href: '/settings' },
+      ];
+    } else if (role === 'worker') {
+      return [
+        { name: 'Dashboard', href: '/worker-dashboard' },
+        { name: 'Activity', href: '/notifications' },
+        { name: 'Profile Settings', href: '/settings' },
+      ];
+    } else {
+      return [
+        { name: 'Home', href: '/dashboard' },
+        { name: 'Search Workers', href: '/search' },
+        { name: 'My Bookings', href: '/bookings' },
+        { name: 'Activity', href: '/notifications' },
+        { name: 'Profile Settings', href: '/settings' },
+      ];
+    }
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -63,16 +89,27 @@ const Navbar = ({ isAuthPage = false }) => {
           </Link>
 
           {/* Center: Desktop Navigation */}
-          <div className="hidden md:flex items-center gap-8 flex-1 justify-center ml-8">
-            {navLinks.map((link) => (
-              <a 
-                key={link.name} 
-                href={link.href} 
-                className="text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-primary-light dark:hover:text-primary-dark transition-colors duration-200 whitespace-nowrap"
-              >
-                {link.name}
-              </a>
-            ))}
+          <div className="hidden md:flex items-center gap-6 flex-1 justify-center ml-8">
+            {getNavLinks().map((link) => {
+              const isHash = link.href.startsWith('/#');
+              return isHash ? (
+                <a 
+                  key={link.name} 
+                  href={link.href} 
+                  className="text-sm font-semibold text-gray-600 dark:text-gray-400 hover:text-primary-light dark:hover:text-primary-dark transition-colors duration-200 whitespace-nowrap"
+                >
+                  {link.name}
+                </a>
+              ) : (
+                <Link 
+                  key={link.name} 
+                  to={link.href} 
+                  className="text-sm font-semibold text-gray-600 dark:text-gray-400 hover:text-primary-light dark:hover:text-primary-dark transition-colors duration-200 whitespace-nowrap"
+                >
+                  {link.name}
+                </Link>
+              );
+            })}
           </div>
 
           {/* Right: Actions */}
@@ -169,16 +206,28 @@ const Navbar = ({ isAuthPage = false }) => {
             >
               <div className="px-4 py-4 flex flex-col gap-3">
                 {/* Mobile Nav Links */}
-                {navLinks.map((link) => (
-                  <a 
-                    key={link.name} 
-                    href={link.href}
-                    onClick={() => setIsMobileMenuOpen(false)}
-                    className="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors duration-200"
-                  >
-                    {link.name}
-                  </a>
-                ))}
+                {getNavLinks().map((link) => {
+                  const isHash = link.href.startsWith('/#');
+                  return isHash ? (
+                    <a 
+                      key={link.name} 
+                      href={link.href}
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors duration-200"
+                    >
+                      {link.name}
+                    </a>
+                  ) : (
+                    <Link 
+                      key={link.name} 
+                      to={link.href}
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors duration-200"
+                    >
+                      {link.name}
+                    </Link>
+                  );
+                })}
 
                 {/* Divider */}
                 <div className="h-px bg-gray-200 dark:bg-gray-800 my-2"></div>

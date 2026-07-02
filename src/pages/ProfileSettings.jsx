@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { User, Bell, Moon, SunMedium, LogOut, Edit3, Save, Upload, MapPin, Loader2, Shield } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { INDIAN_CITIES, SERVICE_CATEGORIES } from '../utils/helpers';
+import { INDIAN_CITIES, SERVICE_CATEGORIES, formatImageUrl } from '../utils/helpers';
 import { doc, getDoc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import LocationPickerModal from '../components/LocationPickerModal';
@@ -438,7 +438,7 @@ const ProfileSettings = () => {
           <div className="flex items-center gap-4">
             <div className="relative shrink-0">
               {editForm.avatar ? (
-                <img src={editForm.avatar} alt="Profile photo" className="w-16 h-16 rounded-full object-cover border" />
+                <img src={formatImageUrl(editForm.avatar)} alt="Profile photo" className="w-16 h-16 rounded-full object-cover border" />
               ) : (
                 <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary-light to-blue-400 flex items-center justify-center text-white text-2xl font-black">
                   {(editForm.name || 'U').charAt(0).toUpperCase()}
