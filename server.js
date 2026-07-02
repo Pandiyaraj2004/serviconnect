@@ -91,6 +91,11 @@ const sanitizeName = (name) => {
   return name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').trim();
 };
 
+const sanitizeEmail = (email) => {
+  if (!email) return 'anonymous';
+  return email.toLowerCase().trim();
+};
+
 // Helper: Extract relative path from a Supabase URL to allow deletion
 const getPathFromUrl = (url) => {
   if (!url) return null;
@@ -106,12 +111,13 @@ app.post('/api/upload/profile/customer', upload.single('image'), async (req, res
     if (!supabase) return res.status(500).json({ error: 'Supabase client not initialized' });
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    // Client passes name in req.body
+    // Client passes name and email in req.body
     const customerName = sanitizeName(req.body.name || 'customer');
+    const customerEmail = req.body.email ? sanitizeEmail(req.body.email) : customerName;
     const ext = path.extname(req.file.originalname) || '.jpg';
     
-    // Structure: customers/{customerName}/profile/profile-image.jpg
-    const filePath = `customers/${customerName}/profile/profile-image${ext}`;
+    // Structure: customer/{email}/profile/profile-image.jpg
+    const filePath = `customer/${customerEmail}/profile/profile-image${ext}`;
 
     const { data, error } = await supabase.storage
       .from(BUCKET_NAME)
@@ -140,10 +146,11 @@ app.post('/api/upload/profile/worker', upload.single('image'), async (req, res) 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
     const workerName = sanitizeName(req.body.name || 'worker');
+    const workerEmail = req.body.email ? sanitizeEmail(req.body.email) : workerName;
     const ext = path.extname(req.file.originalname) || '.jpg';
     
-    // Structure: workers/{workerName}/profile/profile-image.jpg
-    const filePath = `workers/${workerName}/profile/profile-image${ext}`;
+    // Structure: worker/{email}/profile/profile-image.jpg
+    const filePath = `worker/${workerEmail}/profile/profile-image${ext}`;
 
     const { data, error } = await supabase.storage
       .from(BUCKET_NAME)
@@ -171,10 +178,10 @@ app.post('/api/upload/profile/admin', upload.single('image'), async (req, res) =
     if (!supabase) return res.status(500).json({ error: 'Supabase client not initialized' });
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const adminName = sanitizeName(req.body.name || 'admin');
     const ext = path.extname(req.file.originalname) || '.jpg';
     
-    const filePath = `admin/${adminName}/profile/profile-image${ext}`;
+    // Structure: admin/profile/profile-image.jpg
+    const filePath = `admin/profile/profile-image${ext}`;
 
     const { data, error } = await supabase.storage
       .from(BUCKET_NAME)
@@ -203,6 +210,7 @@ app.post('/api/upload/work-photos', upload.array('images', 10), async (req, res)
     if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
 
     const workerName = sanitizeName(req.body.name || 'worker');
+    const workerEmail = req.body.email ? sanitizeEmail(req.body.email) : workerName;
     const urls = [];
 
     for (const file of req.files) {
@@ -210,8 +218,8 @@ app.post('/api/upload/work-photos', upload.array('images', 10), async (req, res)
       const cleanOriginalName = file.originalname.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
       const uniqueName = `${Date.now()}-${cleanOriginalName}${ext}`;
       
-      // Structure: workers/{workerName}/work-photos/{uniqueName}
-      const filePath = `workers/${workerName}/work-photos/${uniqueName}`;
+      // Structure: worker/{email}/work-photos/{uniqueName}
+      const filePath = `worker/${workerEmail}/work-photos/${uniqueName}`;
 
       const { data, error } = await supabase.storage
         .from(BUCKET_NAME)
@@ -281,11 +289,12 @@ app.post('/api/upload/aadhaar', upload.single('image'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
     const workerId = sanitizeName(req.body.workerId || 'worker');
+    const workerEmail = req.body.email ? sanitizeEmail(req.body.email) : workerId;
     const side = req.body.side || 'front';
     const ext = path.extname(req.file.originalname) || '.jpg';
     
-    // Structure: workers/{workerId}/aadhaar/{side}-{timestamp}{ext}
-    const filePath = `workers/${workerId}/aadhaar/${side}-${Date.now()}${ext}`;
+    // Structure: worker/{email}/aadhaar/{side}-{timestamp}{ext}
+    const filePath = `worker/${workerEmail}/aadhaar/${side}-${Date.now()}${ext}`;
 
     const { data, error } = await supabase.storage
       .from(BUCKET_NAME)
@@ -358,6 +367,49 @@ app.post('/api/upload/delete-photo', async (req, res) => {
   } catch (err) {
     console.error('Delete Photo Error:', err);
     res.status(500).json({ error: err.message || 'Deletion failed' });
+  }
+});
+
+// Route: Delete entire folder prefix from Supabase Storage
+app.post('/api/upload/delete-folder', async (req, res) => {
+  try {
+    if (!supabase) return res.status(500).json({ error: 'Supabase client not initialized' });
+    const { prefix } = req.body;
+    if (!prefix) return res.status(400).json({ error: 'No prefix provided for deletion' });
+
+    // Helper function to recursively delete a folder in Supabase Storage
+    const deleteFolder = async (folder) => {
+      const { data: files, error: listError } = await supabase.storage
+        .from(BUCKET_NAME)
+        .list(folder);
+
+      if (listError) throw listError;
+
+      if (files && files.length > 0) {
+        const filesToRemove = [];
+        for (const file of files) {
+          const itemPath = `${folder}/${file.name}`;
+          if (file.id === undefined || file.metadata === null || !file.id) {
+            // Recursive delete
+            await deleteFolder(itemPath);
+          } else {
+            filesToRemove.push(itemPath);
+          }
+        }
+        if (filesToRemove.length > 0) {
+          const { error: removeError } = await supabase.storage
+            .from(BUCKET_NAME)
+            .remove(filesToRemove);
+          if (removeError) throw removeError;
+        }
+      }
+    };
+
+    await deleteFolder(prefix);
+    res.json({ success: true, message: `Successfully deleted folder prefix ${prefix}` });
+  } catch (err) {
+    console.error('Delete Folder Error:', err);
+    res.status(500).json({ error: err.message || 'Folder deletion failed' });
   }
 });
 

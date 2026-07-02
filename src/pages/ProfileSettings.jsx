@@ -129,13 +129,16 @@ const ProfileSettings = () => {
     navigate('/login');
   };
 
-  const uploadFileWithProgress = (url, file, name, onProgress) => {
+  const uploadFileWithProgress = (url, file, name, onProgress, email) => {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       const formData = new FormData();
       formData.append('image', file);
       if (name) {
         formData.append('name', name);
+      }
+      if (email) {
+        formData.append('email', email);
       }
 
       xhr.open('POST', url, true);
@@ -170,13 +173,16 @@ const ProfileSettings = () => {
     });
   };
 
-  const uploadMultipleFilesWithProgress = (url, files, name, onProgress) => {
+  const uploadMultipleFilesWithProgress = (url, files, name, onProgress, email) => {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       const formData = new FormData();
       files.forEach(file => formData.append('images', file));
       if (name) {
         formData.append('name', name);
+      }
+      if (email) {
+        formData.append('email', email);
       }
 
       xhr.open('POST', url, true);
@@ -238,7 +244,8 @@ const ProfileSettings = () => {
         `${API_URL}/api/upload/profile/${roleEndpoint}`,
         compressedFile,
         editForm.name || 'user',
-        setAvatarProgress
+        setAvatarProgress,
+        user?.email
       );
 
       if (data.url) {
@@ -288,7 +295,8 @@ const ProfileSettings = () => {
         `${API_URL}/api/upload/work-photos`,
         compressedFiles,
         editForm.name || 'worker',
-        setWorkProgress
+        setWorkProgress,
+        user?.email
       );
 
       if (data.urls) {

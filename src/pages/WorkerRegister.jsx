@@ -115,13 +115,16 @@ const WorkerRegister = () => {
     nextStep();
   };
 
-  const uploadFileWithProgress = (url, file, name, onProgress) => {
+  const uploadFileWithProgress = (url, file, name, onProgress, email) => {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       const formData = new FormData();
       formData.append('image', file);
       if (name) {
         formData.append('name', name);
+      }
+      if (email) {
+        formData.append('email', email);
       }
 
       xhr.open('POST', url, true);
@@ -156,13 +159,16 @@ const WorkerRegister = () => {
     });
   };
 
-  const uploadMultipleFilesWithProgress = (url, files, name, onProgress) => {
+  const uploadMultipleFilesWithProgress = (url, files, name, onProgress, email) => {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       const formData = new FormData();
       files.forEach(file => formData.append('images', file));
       if (name) {
         formData.append('name', name);
+      }
+      if (email) {
+        formData.append('email', email);
       }
 
       xhr.open('POST', url, true);
@@ -223,7 +229,8 @@ const WorkerRegister = () => {
         `${API_URL}/api/upload/profile/worker`,
         compressedFile,
         form.name || 'worker',
-        setAvatarProgress
+        setAvatarProgress,
+        user?.email
       );
 
       if (data.url) {
@@ -273,7 +280,8 @@ const WorkerRegister = () => {
         `${API_URL}/api/upload/work-photos`,
         compressedFiles,
         form.name || 'worker',
-        setWorkProgress
+        setWorkProgress,
+        user?.email
       );
 
       if (data.urls) {
@@ -403,6 +411,9 @@ const WorkerRegister = () => {
       formData.append('image', compressedFile);
       formData.append('workerId', user?.uid || 'worker');
       formData.append('side', side);
+      if (user?.email) {
+        formData.append('email', user.email);
+      }
 
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `${API_URL}/api/upload/aadhaar`, true);
@@ -1053,6 +1064,7 @@ const WorkerRegister = () => {
                         try {
                           await setDoc(doc(db, 'workers', user.uid), {
                             uid: user.uid,
+                            email: user.email,
                             name: form.name.trim(),
                             phone: form.phone,
                             category: form.category,

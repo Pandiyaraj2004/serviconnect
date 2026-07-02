@@ -2,13 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { Users, ClipboardCheck, Star, ShieldCheck, MessageSquare, AlertTriangle, ShieldX, HelpCircle, MessageCircle, X, Search, CheckCircle, RefreshCw, Send, Tag, ShieldAlert, Loader2 } from 'lucide-react';
-import { collection, onSnapshot, doc, updateDoc, getDocs, getDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, getDocs, getDoc, addDoc, deleteDoc, query, where, serverTimestamp } from 'firebase/firestore';
 import { ref, onValue } from 'firebase/database';
 import { db, rtdb } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { Badge } from '../components/UI';
 import toast from 'react-hot-toast';
 import { formatImageUrl } from '../utils/helpers';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
@@ -22,6 +24,7 @@ const AdminDashboard = () => {
   const [workers, setWorkers] = useState([]);
   const [bookings, setBookings] = useState([]);
   const [chats, setChats] = useState({});
+  const [allUsers, setAllUsers] = useState([]);
   const [tickets, setTickets] = useState([]);
   
   // UI states
@@ -65,6 +68,7 @@ const AdminDashboard = () => {
     // 1. Fetch Users (Customers)
     const unsubUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllUsers(list);
       setCustomers(list.filter(u => u.role === 'customer'));
     });
 
@@ -286,6 +290,108 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleToggleWorkerStatus = async (workerId, isAvailable) => {
+    try {
+      await updateDoc(doc(db, 'workers', workerId), {
+        available: isAvailable,
+        updatedAt: serverTimestamp()
+      });
+      toast.success(`Worker status updated to: ${isAvailable ? 'Available' : 'At Work (Busy)'}`);
+    } catch (err) {
+      console.error('Error toggling worker status:', err);
+      toast.error('Failed to update worker status');
+    }
+  };
+
+  const handleDeleteCustomer = async (customerId, customerEmail) => {
+    if (!window.confirm("Are you sure you want to completely delete this customer? This will remove all their data from Firestore and Supabase Storage!")) return;
+    
+    const toastId = toast.loading('Deleting customer...');
+    try {
+      // 1. Delete customer document from Firestore 'users'
+      await deleteDoc(doc(db, 'users', customerId));
+      
+      // 2. Delete any bookings related to this customer
+      const bookingsQuery = query(collection(db, 'bookings'), where('customerId', '==', customerId));
+      const bookingsSnap = await getDocs(bookingsQuery);
+      await Promise.all(bookingsSnap.docs.map(doc => deleteDoc(doc.ref)));
+
+      // 3. Delete Supabase storage folder
+      if (customerEmail) {
+        await fetch(`${API_URL}/api/upload/delete-folder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prefix: `customer/${customerEmail.trim()}` })
+        });
+      }
+
+      toast.success('Customer deleted successfully', { id: toastId });
+    } catch (err) {
+      console.error('Error deleting customer:', err);
+      toast.error('Failed to delete customer', { id: toastId });
+    }
+  };
+
+  const handleDeleteWorker = async (workerId, workerEmailArg) => {
+    if (!window.confirm("Are you sure you want to completely delete this worker? This will remove all their profile, portfolio, Aadhaar docs, and Firestore records!")) return;
+
+    const toastId = toast.loading('Deleting worker...');
+    try {
+      // Get the email from workers or users document to ensure we have it for Supabase folder deletion
+      let workerEmail = workerEmailArg;
+      if (!workerEmail) {
+        const userSnap = await getDoc(doc(db, 'users', workerId));
+        if (userSnap.exists()) {
+          workerEmail = userSnap.data().email;
+        }
+      }
+
+      // 1. Delete worker document from Firestore 'workers'
+      await deleteDoc(doc(db, 'workers', workerId));
+
+      // 2. Delete private worker document
+      await deleteDoc(doc(db, 'workers_private', workerId));
+
+      // 3. Delete user document from 'users'
+      await deleteDoc(doc(db, 'users', workerId));
+
+      // 4. Delete any bookings related to this worker
+      const bookingsQuery = query(collection(db, 'bookings'), where('workerId', '==', workerId));
+      const bookingsSnap = await getDocs(bookingsQuery);
+      await Promise.all(bookingsSnap.docs.map(doc => deleteDoc(doc.ref)));
+
+      // 5. Delete Supabase storage folder
+      if (workerEmail) {
+        await fetch(`${API_URL}/api/upload/delete-folder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prefix: `worker/${workerEmail.trim()}` })
+        });
+      }
+
+      toast.success('Worker deleted successfully', { id: toastId });
+    } catch (err) {
+      console.error('Error deleting worker:', err);
+      toast.error('Failed to delete worker', { id: toastId });
+    }
+  };
+
+  const getUserName = (uid) => {
+    if (!uid) return 'Anonymous';
+    const uDoc = allUsers.find(u => (u.id === uid || u.uid === uid));
+    if (uDoc) return uDoc.name;
+    const wDoc = workers.find(w => (w.id === uid || w.uid === uid));
+    if (wDoc) return wDoc.name;
+    return uid;
+  };
+
+  const getWorkerEmail = (worker) => {
+    if (worker.email) return worker.email;
+    const workerId = worker.id || worker.uid;
+    const uDoc = allUsers.find(u => (u.id === workerId || u.uid === workerId));
+    return uDoc?.email || 'No email';
+  };
+
   // Metrics Calculations
   const totalCustomers = customers.length;
   const totalWorkers = workers.length;
@@ -420,6 +526,7 @@ const AdminDashboard = () => {
                     <th className="px-6 py-3">Email</th>
                     <th className="px-6 py-3">Phone</th>
                     <th className="px-6 py-3">Location</th>
+                    <th className="px-6 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-850">
@@ -430,11 +537,19 @@ const AdminDashboard = () => {
                       <td className="px-6 py-4">{c.email}</td>
                       <td className="px-6 py-4">{c.phone || 'N/A'}</td>
                       <td className="px-6 py-4 truncate max-w-[200px]">{c.address || 'Not set'}</td>
+                      <td className="px-6 py-4 text-right">
+                        <button
+                          onClick={() => handleDeleteCustomer(c.id, c.email)}
+                          className="px-2.5 py-1.5 bg-red-500 text-white rounded font-bold text-[10px] hover:bg-red-650 transition flex items-center gap-1 ml-auto"
+                        >
+                          <ShieldX size={12} /> Delete
+                        </button>
+                      </td>
                     </tr>
                   ))}
                   {customers.length === 0 && (
                     <tr>
-                      <td colSpan="5" className="px-6 py-10 text-center text-gray-400 font-semibold">No customers registered yet.</td>
+                      <td colSpan="6" className="px-6 py-10 text-center text-gray-400 font-semibold">No customers registered yet.</td>
                     </tr>
                   )}
                 </tbody>
@@ -476,7 +591,8 @@ const AdminDashboard = () => {
                           )}
                           <div>
                             <span className="font-bold block text-sm">{w.name}</span>
-                            <span className="text-[10px] text-gray-400 font-mono select-all">{w.id}</span>
+                            <span className="text-[10px] text-gray-400 font-mono select-all block">{w.id}</span>
+                            <span className="text-[10px] text-gray-500 font-semibold select-all block">{getWorkerEmail(w)}</span>
                           </div>
                         </div>
                       </td>
@@ -493,14 +609,19 @@ const AdminDashboard = () => {
                             <span className="px-2 py-0.5 bg-red-100 text-red-700 dark:bg-red-950/20 dark:text-red-400 text-[10px] rounded font-bold">
                               Removed
                             </span>
-                          ) : w.available ? (
-                            <span className="px-2 py-0.5 bg-green-150 text-green-700 dark:bg-green-950/20 dark:text-green-400 text-[10px] rounded font-bold">
-                              Available
-                            </span>
                           ) : (
-                            <span className="px-2 py-0.5 bg-gray-150 text-gray-700 dark:bg-gray-800 dark:text-gray-400 text-[10px] rounded font-bold">
-                              Busy
-                            </span>
+                            <select
+                              value={w.available ? 'available' : 'busy'}
+                              onChange={(e) => handleToggleWorkerStatus(w.id, e.target.value === 'available')}
+                              className={`px-2 py-0.5 text-[10px] rounded font-bold border-none outline-none cursor-pointer ${
+                                w.available 
+                                  ? 'bg-green-150 text-green-700 dark:bg-green-950/20 dark:text-green-400' 
+                                  : 'bg-yellow-100 text-yellow-750 dark:bg-yellow-950/20 dark:text-yellow-400'
+                              }`}
+                            >
+                              <option value="available" className="bg-white dark:bg-gray-800 text-gray-900 dark:text-white">🟢 Available</option>
+                              <option value="busy" className="bg-white dark:bg-gray-800 text-gray-900 dark:text-white">🔴 At Work</option>
+                            </select>
                           )}
                           <span className={`px-2 py-0.5 text-[9px] rounded font-bold uppercase ${
                             w.verificationStatus === 'verified' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' :
@@ -533,6 +654,12 @@ const AdminDashboard = () => {
                               className="px-2.5 py-1.5 bg-red-500 text-white rounded font-bold text-[10px] hover:bg-red-600 transition flex items-center gap-1"
                             >
                               <ShieldX size={12} /> Remove
+                            </button>
+                            <button
+                              onClick={() => handleDeleteWorker(w.id, w.email)}
+                              className="px-2.5 py-1.5 bg-red-700 text-white rounded font-bold text-[10px] hover:bg-red-800 transition flex items-center gap-1"
+                            >
+                              ✕ Delete
                             </button>
                           </>
                         )}
@@ -628,9 +755,9 @@ const AdminDashboard = () => {
                           : 'border-gray-100 hover:bg-gray-50 dark:border-gray-800 text-gray-700 dark:text-gray-300'
                       }`}
                     >
-                      <div className="font-bold truncate">Room: {roomId}</div>
-                      <div className="text-[10px] text-gray-450 truncate mt-1">Customer: {customerUid}</div>
-                      <div className="text-[10px] text-gray-450 truncate">Worker: {workerUid}</div>
+                      <div className="font-bold truncate text-[10px] text-gray-400 font-mono">ID: {roomId}</div>
+                      <div className="text-[11px] text-gray-700 dark:text-gray-200 truncate mt-1">Customer: <strong className="font-extrabold text-primary-light">{getUserName(customerUid)}</strong></div>
+                      <div className="text-[11px] text-gray-700 dark:text-gray-200 truncate">Worker: <strong className="font-extrabold text-primary-light">{getUserName(workerUid)}</strong></div>
                     </button>
                   );
                 })}
@@ -666,11 +793,14 @@ const AdminDashboard = () => {
                             <span className="font-bold text-primary-light uppercase tracking-wider text-[8px] bg-primary-light/10 px-1.5 py-0.5 rounded">
                               {val.senderRole || 'User'}
                             </span>
-                            <span className="text-[8px] text-gray-400 font-mono">{val.sender}</span>
+                            <span className="text-[10px] text-gray-700 dark:text-gray-200 font-semibold">
+                              {getUserName(val.sender)}
+                            </span>
+                            <span className="text-[8px] text-gray-400 font-mono">({val.sender})</span>
                           </div>
                           <p className="text-gray-800 dark:text-gray-200">{val.text}</p>
                           <span className="text-[8px] text-gray-400 text-right block mt-1">
-                            {new Date(val.timestamp).toLocaleTimeString()}
+                            {new Date(val.timestamp).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
                           </span>
                         </div>
                       ))
