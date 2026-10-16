@@ -1,4 +1,27 @@
-# 🔧 ServiConnect
+# ServiConnect
+
+> A local-services marketplace connecting customers and independent workers through search, booking, and chat.
+
+**React · Vite · Express · Firebase · JavaScript**
+
+## At a glance
+
+- Customer, worker, and admin interfaces covering the service-booking lifecycle.
+- Location-aware discovery, booking forms, reviews, and job-completion flows.
+- An optional AI-assisted skill-question workflow.
+
+## Explore the implementation
+
+| Start here | What to inspect |
+| --- | --- |
+| [src/pages](src/pages) | Product screens |
+| [src/context/AuthContext.jsx](src/context/AuthContext.jsx) | Authentication state |
+| [server.js](server.js) | Upload backend |
+| [FIREBASE_SETUP.md](FIREBASE_SETUP.md) | Service configuration |
+
+---
+
+## Detailed guide
 
 > AI-powered local service worker finder, verifier, and booking platform — built for smaller Indian cities underserved by platforms like Urban Company.
 
@@ -193,7 +216,7 @@ Test the entire system end-to-end using the three roles:
 - Customer leaves a review.
 
 ### 4. Administrative Controls
-- Log in using `username: pandi` and `password: pandi`.
+- Use a local administrator account configured for your own test environment. Do not reuse shared demo credentials.
 - Check live metrics on the Overview dashboard.
 - Inspect the conversations under **Chats Inspector** (reads logs directly from RTDB).
 - Select a worker and click **Remove**. Enter the reason to disable their profile. Try accessing the dashboard using that worker's credentials to confirm the warning message.
@@ -205,14 +228,14 @@ Test the entire system end-to-end using the three roles:
 ServiConnect is deployed and fully production-ready.
 
 - **Frontend (Vercel)**: [https://serviconnect-seven.vercel.app](https://serviconnect-seven.vercel.app)
-- **Backend API Gateway (Render)**: [https://serviconnect-xwyv.onrender.com](https://serviconnect-xwyv.onrender.com)
-  - Health check endpoint: [https://serviconnect-xwyv.onrender.com/health](https://serviconnect-xwyv.onrender.com/health)
+- **Backend API Gateway (Render)**: [https://your-backend.example.com](https://your-backend.example.com)
+  - Health check endpoint: [https://your-backend.example.com/health](https://your-backend.example.com/health)
 
 ### Production Configuration
 
 #### Frontend Environment Settings (Vercel)
 Provide these values in Vercel's Environment Variables settings:
-* `VITE_API_URL` = `https://serviconnect-xwyv.onrender.com`
+* `VITE_API_URL` = `https://your-backend.example.com`
 * `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, etc.
 * `VITE_GEMINI_API_KEY` (Gemini API key for worker verification tests)
 
@@ -223,3 +246,6 @@ Provide these values in Render's Environment Variables settings:
 * `VITE_SUPABASE_URL` & `SUPABASE_SERVICE_ROLE_KEY` (for secure server-side file uploads to Supabase)
 * `PORT` (automatically assigned by Render's execution environment)
 
+---
+
+Built by **Pandiyaraj A** · [Portfolio](https://pandiyaraj.netlify.app/) · [GitHub](https://github.com/Pandiyaraj2004) · [LinkedIn](https://www.linkedin.com/in/pandiyaraj-a-mca/)
