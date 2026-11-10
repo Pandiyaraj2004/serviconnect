@@ -71,7 +71,7 @@ Customers can search, verify, and book independent freelance workers (plumbers, 
 | Auth | Firebase Authentication (Email + Google) |
 | Database | Firebase Firestore (bookings, users, workers) |
 | Realtime | Firebase Realtime Database (chat) |
-| AI | Google Gemini 1.5 Flash |
+| AI | Google gemini-2.5-flash-lite |
 | Maps | React Leaflet + OpenStreetMap |
 | Toast | react-hot-toast |
 
